@@ -83,6 +83,9 @@ METERS.forEach(function (k) {
   metersEl.appendChild(row);
   bars[k] = fill; nums[k] = num;
 });
+const trackEl = document.createElement('p');
+trackEl.style.cssText = 'margin:8px 0 0;color:#6B7382;text-align:right';
+metersEl.appendChild(trackEl);
 const tut = $('tut'), tutTop = $('tutTop');
 E.hooks.onSource = function (label, kind) {
   tMic.setAttribute('aria-pressed', String(kind === 'mic'));
@@ -341,6 +344,8 @@ addEventListener('keydown', function (e) {
   else if (k === ' ') { e.preventDefault(); hold = !hold; }
   else if (k === 'm') tMic.click();
   else if (k === 'd') metersEl.classList.toggle('on');
+  // preview the other layouts without waiting for a track change
+  else if (k === 'v') { F.variant = (F.variant + 1) % 4; hintEl.textContent = 'layout ' + F.variant; }
   else if (k === 'c') clearItems();
   else if (k === 'z') { items.pop(); countEl.textContent = items.length || ''; }
 });
@@ -439,6 +444,7 @@ function tick(now) {
       bars[k].style.width = (clamp(F[k], 0, 1) * 100) + '%';
       nums[k].textContent = Math.round(F[k] * 100);
     });
+    trackEl.textContent = 'track ' + F.trackId + ' / layout ' + F.variant;
   }
   requestAnimationFrame(tick);
 }
