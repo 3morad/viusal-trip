@@ -6,13 +6,46 @@ const $ = function (id) { return document.getElementById(id); };
 
 /* ---------- elements ---------- */
 const glCv = $('gl'), handCv = $('hands'), hctx = handCv.getContext('2d');
-const cam = $('cam'), gate = $('gate'), hud = $('hud'), fileIn = $('file');
+const cam = $('cam'), hud = $('hud'), fileIn = $('file');
 const renderer = E.makeRenderer(glCv, 1.0);
 
 /* ---------- gesture state ---------- */
 const G     = { pinch: 0, spread: 0, hueOff: 0, roll: 0, gain: 0 };
 const aim   = { pinch: 0, spread: 0, hueOff: 0, roll: 0, gain: 0 };
 let sceneId = 0, hold = false, handsOn = false, landmarks = [];
+
+/* Shapes the hands have placed. The base field runs without them. */
+const MAXITEM = E.MAXITEM;
+const items = [];
+const itemA = new Float32Array(MAXITEM * 4), itemB = new Float32Array(MAXITEM * 4);
+const TTL = { 0: Infinity, 1: 3.2, 2: 9.0 };        // orb persists, ring pops, shard fades
+function addItem(type, x, y, size, strength) {
+  if (items.length >= MAXITEM) items.shift();
+  items.push({ type: type, x: x, y: y, size: size, str: strength,
+               born: performance.now() / 1000,
+               hue: (E.hueOf(F.chord.root) + G.hueOff) % 1 });
+  countEl.textContent = items.length ? items.length : '';
+}
+function packItems(now) {
+  let n = 0;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const age = now - items[i].born;
+    if (age > TTL[items[i].type]) { items.splice(i, 1); }
+  }
+  for (let i = 0; i < items.length && n < MAXITEM; i++, n++) {
+    const it = items[i], age = now - it.born, o = n * 4;
+    itemA[o] = it.x; itemA[o+1] = it.y; itemA[o+2] = it.size; itemA[o+3] = it.type;
+    itemB[o] = age;   itemB[o+1] = it.hue; itemB[o+2] = it.str; itemB[o+3] = 0;
+  }
+  G.count = n; G.itemA = itemA; G.itemB = itemB;
+  return n;
+}
+function clearItems() { items.length = 0; G.count = 0; countEl.textContent = ''; }
+/* landmark space to the shader's centred, height normalised space */
+function toField(lx, ly) {
+  const asp = glCv.clientWidth / Math.max(1, glCv.clientHeight);
+  return { x: ((1 - lx) - 0.5) * asp, y: (0.5 - ly) };
+}
 
 /* One Euro: low lag when the hand moves, no jitter when it holds still. */
 function OneEuro(minCut, beta) {
@@ -32,8 +65,8 @@ const filt = { pinch: OneEuro(1.2, 0.02), spread: OneEuro(1.2, 0.02),
                hueOff: OneEuro(0.8, 0.01), roll: OneEuro(1.0, 0.02), gain: OneEuro(1.2, 0.02) };
 
 /* ---------- hud ---------- */
-const dot = $('dot'), chordEl = $('chord'), bpmEl = $('bpm'),
-      srcEl = $('src'), gEl = $('gstate'), hintEl = $('hint');
+const dot = $('dot'), chordEl = $('chord'), bpmEl = $('bpm'), hintEl = $('hint'), countEl = $('count');
+const tMic = $('tMic'), tHands = $('tHands'), tFile = $('tFile');
 const SCENES = ['trails', 'fractal', 'field'];
 const sceneBox = $('scenes');
 SCENES.forEach(function (name, i) {
@@ -49,7 +82,12 @@ function setScene(i) {
   renderer && renderer.alloc();
   poke();
 }
-E.hooks.onSource = function (label) { srcEl.textContent = label; };
+E.hooks.onSource = function (label, kind) {
+  tMic.setAttribute('aria-pressed', String(kind === 'mic'));
+  tFile.setAttribute('aria-pressed', String(kind === 'file'));
+  tMic.classList.remove('busy');
+  if (kind === 'file') tFile.textContent = label.length > 14 ? label.slice(0, 12) + '..' : label;
+};
 E.hooks.onHint = function (msg) { hintEl.textContent = String(msg).replace(/<[^>]+>/g, ''); };
 
 let idleTimer = 0;
@@ -68,11 +106,16 @@ const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,
                [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 const d3 = function (a, b) { const x=a.x-b.x, y=a.y-b.y, z=(a.z||0)-(b.z||0); return Math.hypot(x,y,z); };
 
-let landmarker = null, handTimer = 0, poseHeld = 0, poseName = '', lockout = 0;
+let landmarker = null, handTimer = 0;
 
 async function startHands() {
-  if (landmarker) { handsOn = !handsOn; gEl.classList.toggle('off', !handsOn); return; }
-  gEl.textContent = 'loading'; gEl.classList.remove('off');
+  if (landmarker) {
+    handsOn = !handsOn;
+    tHands.setAttribute('aria-pressed', String(handsOn));
+    if (!handsOn) landmarks = [];
+    return;
+  }
+  tHands.classList.add('busy'); tHands.textContent = 'loading';
   try {
     const vision = await import('./vendor/vision_bundle.mjs');
     const fileset = await vision.FilesetResolver.forVisionTasks('./vendor/wasm');
@@ -86,12 +129,15 @@ async function startHands() {
     cam.srcObject = stream;
     await cam.play();
     handsOn = true;
-    gEl.textContent = 'hands on';
+    tHands.classList.remove('busy');
+    tHands.textContent = 'hands';
+    tHands.setAttribute('aria-pressed', 'true');
     handLoop();
   } catch (err) {
     landmarker = null;
-    gEl.classList.add('off');
-    gEl.textContent = 'no camera';
+    tHands.classList.remove('busy');
+    tHands.textContent = 'no camera';
+    tHands.disabled = true;
     hintEl.textContent = (window.self !== window.top)
       ? 'camera blocked in this frame'
       : 'camera unavailable';
@@ -114,46 +160,60 @@ function handLoop() {
   step();
 }
 
+let wasPinched = false, wasOpen = false, lastPaint = 0, lastPaintPos = null, fistSince = 0;
+
 function readHands(hands, t) {
-  if (!hands.length) { aim.pinch = 0; aim.spread = 0; aim.gain = 0; gEl.textContent = handsOn ? 'reach in' : 'hands off'; return; }
-  gEl.textContent = hands.length === 2 ? 'two hands' : 'one hand';
+  if (!hands.length) {
+    aim.gain = 0; aim.spread = 0;
+    wasPinched = false; wasOpen = false; lastPaintPos = null; fistSince = 0;
+    return;
+  }
   const h = hands[0];
-  const size = Math.max(1e-4, d3(h[0], h[9]));           // scale invariant: distance is not a control
+  const size = Math.max(1e-4, d3(h[0], h[9]));        // scale invariant: distance is not a control
+  const ext = TIPS.map(function (tip, i) { return d3(h[tip], h[0]) > d3(h[PIPS[i]], h[0]); });
+  const nExt = ext.reduce(function (a, b) { return a + (b ? 1 : 0); }, 0);
 
-  const pinchRaw = d3(h[4], h[8]) / size;                // thumb to index
-  aim.pinch = clamp(1 - (pinchRaw - 0.18) / 1.05, 0, 1);
-
-  let open = 0;
-  for (let i = 0; i < 4; i++) open += d3(h[TIPS[i]], h[0]) > d3(h[PIPS[i]], h[0]) ? 1 : 0;
-  const openness = open / 4;
-  aim.gain = 1 - openness;                               // closing the hand holds the trails
-
-  aim.hueOff = clamp(1 - h[0].y, 0, 1);                  // height in frame
-
+  aim.hueOff = clamp(1 - h[0].y, 0, 1);
   const rv = { x: h[17].x - h[5].x, y: h[17].y - h[5].y };
   aim.roll = clamp(Math.atan2(rv.y, rv.x) / Math.PI, -1, 1);
+  aim.gain = clamp(1 - nExt / 4, 0, 1);
 
+  // two hands apart add mirror symmetry to whatever is already there
   aim.spread = hands.length === 2
     ? clamp(Math.hypot(hands[0][0].x - hands[1][0].x, hands[0][0].y - hands[1][0].y) * 1.4, 0, 1)
-    : 0;
+    : aim.spread * 0.94;
 
-  // poses: held for 120ms, then locked out for 300ms
-  const ext = TIPS.map(function (tip, i) { return d3(h[tip], h[0]) > d3(h[PIPS[i]], h[0]); });
-  let pose = '';
-  if (!ext[0] && !ext[1] && !ext[2] && !ext[3]) pose = 'fist';
-  else if (ext[0] && ext[1] && !ext[2] && !ext[3]) pose = 'peace';
-  else if (ext[0] && ext[1] && ext[2] && ext[3]) pose = 'palm';
+  // PINCH: drop an orb where thumb and finger meet
+  const pinched = d3(h[4], h[8]) / size < 0.42;
+  if (pinched && !wasPinched) {
+    const f = toField((h[4].x + h[8].x) / 2, (h[4].y + h[8].y) / 2);
+    addItem(0, f.x, f.y, 0.045 + Math.random() * 0.03, 1.0);
+  }
+  wasPinched = pinched;
 
-  if (pose && pose === poseName) {
-    if (t - poseHeld > 0.12 && t > lockout) { firePose(pose); lockout = t + 0.30; }
-  } else { poseName = pose; poseHeld = t; }
-}
+  // POINT: one finger out draws a trail of shards
+  if (ext[0] && !ext[1] && !ext[2] && !ext[3]) {
+    const f = toField(h[8].x, h[8].y);
+    const moved = !lastPaintPos || Math.hypot(f.x - lastPaintPos.x, f.y - lastPaintPos.y) > 0.03;
+    if (t - lastPaint > 0.055 && moved) {
+      addItem(2, f.x, f.y, 0.05, 0.85);
+      lastPaint = t; lastPaintPos = f;
+    }
+  } else { lastPaintPos = null; }
 
-function firePose(pose) {
-  if (pose === 'peace') setScene(sceneId + 1);
-  else if (pose === 'palm') { hold = false; renderer && renderer.alloc(); }
-  else if (pose === 'fist') hold = true;
-  poke();
+  // OPEN PALM: push a ring out from the middle of your hand
+  const open = nExt === 4;
+  if (open && !wasOpen) {
+    const f = toField(h[9].x, h[9].y);
+    addItem(1, f.x, f.y, 0.05, 1.2);
+  }
+  wasOpen = open;
+
+  // FIST: hold it closed to wipe the scene back to the base
+  if (nExt === 0) {
+    if (!fistSince) fistSince = t;
+    else if (t - fistSince > 0.7) { clearItems(); fistSince = t + 1e6; }
+  } else fistSince = 0;
 }
 
 function drawHands() {
@@ -181,18 +241,32 @@ function drawHands() {
   hctx.shadowBlur = 0;
 }
 
-/* ---------- pointer fallback, so it plays without a camera ---------- */
-let dragging = false;
-addEventListener('pointerdown', function (e) { if (e.target.tagName !== 'BUTTON') { dragging = true; onDrag(e); } });
-addEventListener('pointerup', function () { dragging = false; if (!handsOn) { aim.pinch = 0; aim.gain = 0; } });
-addEventListener('pointermove', function (e) { if (dragging) onDrag(e); });
-function onDrag(e) {
-  if (handsOn) return;
-  aim.hueOff = clamp(e.clientX / innerWidth, 0, 1);
-  aim.pinch  = clamp(1 - e.clientY / innerHeight, 0, 1);
-  aim.gain   = aim.pinch * 0.6;
-  aim.spread = clamp((e.clientX / innerWidth - 0.5) * 2, 0, 1);
+/* ---------- pointer places the same shapes, for when there is no camera ---------- */
+let dragging = false, dragged = false, lastPtr = null, lastPtrT = 0;
+function ptrField(e) {
+  const asp = glCv.clientWidth / Math.max(1, glCv.clientHeight);
+  return { x: (e.clientX / innerWidth - 0.5) * asp, y: 0.5 - e.clientY / innerHeight };
 }
+addEventListener('pointerdown', function (e) {
+  if (e.target.closest('button')) return;
+  dragging = true; dragged = false; lastPtr = ptrField(e);
+});
+addEventListener('pointermove', function (e) {
+  if (!dragging || handsOn) return;
+  const f = ptrField(e), t = performance.now() / 1000;
+  aim.hueOff = clamp(e.clientX / innerWidth, 0, 1);
+  if (t - lastPtrT > 0.055 && (!lastPtr || Math.hypot(f.x - lastPtr.x, f.y - lastPtr.y) > 0.03)) {
+    addItem(2, f.x, f.y, 0.05, 0.85);
+    lastPtr = f; lastPtrT = t; dragged = true;
+  }
+});
+addEventListener('pointerup', function (e) {
+  if (dragging && !dragged && !handsOn && !e.target.closest('button')) {
+    const f = ptrField(e);
+    addItem(0, f.x, f.y, 0.05, 1.0);
+  }
+  dragging = false;
+});
 
 /* ---------- keys ---------- */
 addEventListener('keydown', function (e) {
@@ -201,34 +275,34 @@ addEventListener('keydown', function (e) {
   else if (k === 'h') startHands();
   else if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(function () {}); }
   else if (k === ' ') { e.preventDefault(); hold = !hold; }
+  else if (k === 'm') tMic.click();
+  else if (k === 'c') clearItems();
+  else if (k === 'z') { items.pop(); countEl.textContent = items.length || ''; }
 });
 
-/* ---------- boot ---------- */
-function begin() {
-  gate.classList.add('hide');
-  hud.hidden = false;
-  poke();
-  setTimeout(function () { gate.remove(); }, 700);
-}
-$('pMic').addEventListener('click', async function () {
+/* ---------- boot: it is already running. Inputs are opt in. ---------- */
+tMic.addEventListener('click', async function () {
+  if (F.source === 'mic') return;
+  tMic.classList.add('busy');
   const ok = await E.enableMic();
-  if (!ok) srcEl.textContent = 'synthetic';
-  begin();
+  tMic.classList.remove('busy');
+  if (!ok) { tMic.textContent = 'no mic'; tMic.disabled = true; }
 });
-$('pFile').addEventListener('click', function () { fileIn.click(); });
-fileIn.addEventListener('change', function (e) { if (e.target.files[0]) { E.playFile(e.target.files[0]); begin(); } });
-$('pDemo').addEventListener('click', function () { srcEl.textContent = 'synthetic'; begin(); });
-if (E.micBlocked()) {
-  $('pMic').disabled = true;
-  $('pMic').textContent = 'Mic blocked here';
-  $('pFile').classList.add('primary');
-}
+tFile.addEventListener('click', function () { fileIn.click(); });
+fileIn.addEventListener('change', function (e) { if (e.target.files[0]) E.playFile(e.target.files[0]); });
+tHands.addEventListener('click', function () { startHands(); });
+if (E.micBlocked()) { tMic.disabled = true; tMic.textContent = 'no mic'; }
+
 addEventListener('dragover', function (e) { e.preventDefault(); });
 addEventListener('drop', function (e) {
   e.preventDefault();
   const f = e.dataTransfer && e.dataTransfer.files[0];
-  if (f) { E.playFile(f); if (!gate.classList.contains('hide')) begin(); }
+  if (f) E.playFile(f);
 });
+
+const notice = $('notice');
+setTimeout(function () { notice.classList.add('gone'); }, 5200);
+setTimeout(function () { notice.remove(); }, 6600);
 
 /* ---------- loop ---------- */
 let t0 = performance.now(), last = t0;
@@ -243,6 +317,8 @@ function tick(now) {
   G.hueOff = filt.hueOff(aim.hueOff, ts);
   G.roll   = filt.roll(aim.roll, ts);
   G.gain   = hold ? 1 : filt.gain(aim.gain, ts);
+
+  packItems(now / 1000);
 
   const drive = F.bands[0] * 0.55 + F.bands[1] * 0.30 + F.rms * 0.15;
   const bright = E.limitFlash(clamp(drive, 0, 1), now);
