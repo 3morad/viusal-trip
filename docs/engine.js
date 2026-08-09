@@ -110,6 +110,14 @@ function micBlocked(){
   return false;   // unknown, let the click settle it
 }
 
+async function useAudioStream(stream){
+  const ctx = ensureCtx();
+  await ctx.resume();
+  attachAnalyser(ctx, ctx.createMediaStreamSource(stream), false);
+  setSource('Live microphone', 'mic');
+  return true;
+}
+
 async function enableMic(){
   try {
     if(!navigator.mediaDevices || !window.isSecureContext) throw { name: 'InsecureContext' };
@@ -484,7 +492,7 @@ global.ChromaEngine = {
   synth: synth,
   analyse: function (dt) { if (analyser) { analyse(dt); return true; } return false; },
   hasInput: function () { return !!analyser; },
-  enableMic: enableMic, playFile: playFile, micBlocked: micBlocked,
+  enableMic: enableMic, useAudioStream: useAudioStream, playFile: playFile, micBlocked: micBlocked,
   limitFlash: limitFlash,
   makeRenderer: makeRenderer, sizeCanvas: sizeCanvas, MAXITEM: 32
 };

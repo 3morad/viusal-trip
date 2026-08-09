@@ -39,14 +39,6 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 .hud-br{bottom:18px;right:18px;gap:6px}
 #chord{color:var(--ink);font-size:.9375rem;letter-spacing:.06em}
 .dot{width:9px;height:9px;border-radius:50%;background:#333;box-shadow:0 0 14px currentColor}
-#scenes{display:flex;gap:6px;pointer-events:auto}
-.sbtn{
-  font:inherit;letter-spacing:.12em;text-transform:uppercase;color:#6C7482;
-  background:transparent;border:1px solid transparent;border-radius:999px;
-  padding:5px 11px;cursor:pointer;transition:color .2s,border-color .2s;
-}
-.sbtn:hover{color:var(--ink)}
-.sbtn[aria-pressed="true"]{color:#0A0C11;background:var(--ink);border-color:var(--ink)}
 .hud-bl{gap:6px}
 .tog{
   font:inherit;letter-spacing:.12em;text-transform:uppercase;color:#6C7482;
@@ -58,17 +50,42 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 .tog[aria-pressed="true"]{color:#0A0C11;background:var(--ink);border-color:var(--ink)}
 .tog[disabled]{opacity:.4;cursor:default}
 .tog.busy{color:var(--accent)}
-#scenes,.hud-bl{pointer-events:auto}
-#notice{
-  position:fixed;left:50%;bottom:max(22px,env(safe-area-inset-bottom));transform:translateX(-50%);
-  z-index:12;font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
-  color:#69707E;background:rgba(5,6,10,.55);border:1px solid var(--line);border-radius:999px;
-  padding:8px 16px;pointer-events:none;transition:opacity 1s ease;text-align:center;
+.hud-bl{pointer-events:auto}
+
+/* ---------- tutorial: shows itself, then gets out of the way ---------- */
+#tut{
+  position:fixed;z-index:13;left:50%;transform:translateX(-50%);
+  bottom:max(58px,calc(env(safe-area-inset-bottom) + 54px));
+  width:min(430px,calc(100vw - 28px));
+  background:rgba(6,8,13,.62);border:1px solid var(--line);border-radius:16px;
+  padding:14px 16px;pointer-events:none;
+  transition:opacity 1.4s ease,transform 1.4s ease;
 }
-#notice.gone{opacity:0}
+#tut.gone{opacity:0;transform:translateX(-50%) translateY(10px)}
+#tutTop{
+  margin:0 0 12px;font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--accent);text-align:center;line-height:1.5;
+}
+#tutTop.done{color:#5E6675}
+.tut-rows{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+.tut-rows li{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:12px}
+.tut-rows svg{
+  width:22px;height:22px;stroke:var(--ink);stroke-width:1.5;fill:none;
+  stroke-linecap:round;stroke-linejoin:round;opacity:.85;
+}
+.tut-rows b{font-size:.8125rem;font-weight:550;color:var(--ink);letter-spacing:-.01em}
+#tutFoot{
+  margin:12px 0 0;padding-top:10px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:.5938rem;letter-spacing:.09em;text-transform:uppercase;
+  color:#565D6B;text-align:center;
+}
+.tut-rows span{
+  font-family:var(--mono);font-size:.625rem;letter-spacing:.09em;
+  text-transform:uppercase;color:#6B7382;text-align:right;
+}
+@media (max-height:560px){ .tut-rows li:nth-child(n+4){display:none} }
 #gstate{color:var(--accent)}
 #gstate.off{color:#4C5361}
-@media (max-width:640px){ .hud-bl{display:none} }
 </style>
 </head>
 <body>
@@ -79,7 +96,6 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 
 <div id="hud">
   <div class="hud-tl"><span class="dot" id="dot"></span><span id="chord">--</span><span id="bpm"></span></div>
-  <div class="hud-tr"><div id="scenes"></div></div>
   <div class="hud-bl">
     <button class="tog" id="tMic"   type="button" aria-pressed="false">mic</button>
     <button class="tog" id="tHands" type="button" aria-pressed="false">hands</button>
@@ -88,7 +104,19 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
   <div class="hud-br"><span id="count"></span><span id="hint"></span></div>
 </div>
 
-<div id="notice">Flashing light. Brightness is rate limited.</div>
+<div id="tut">
+  <div class="tut-in">
+    <p id="tutTop">Tap anywhere to let it hear and see you</p>
+    <ul class="tut-rows">
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z"  /> <path d="M8 13v-8.5a1.5 1.5 0 0 1 3 0v7.5" /> <path d="M11 11.5v-2a1.5 1.5 0 0 1 3 0v2.5" /> <path d="M14 10.5a1.5 1.5 0 0 1 3 0v1.5" /> <path d="M17 11.5a1.5 1.5 0 0 1 3 0v4.5a6 6 0 0 1 -6 6h-2h.208a6 6 0 0 1 -5.012 -2.7l-.196 -.3c-.312 -.479 -1.407 -2.388 -3.286 -5.728a1.5 1.5 0 0 1 .536 -2.022a1.867 1.867 0 0 1 2.28 .28l1.47 1.47" /> <path d="M5 3l-1 -1" /> <path d="M4 7h-1" /> <path d="M14 3l1 -1" /> <path d="M15 6h1" /></svg><b>Pinch</b><span>drop an orb</span></li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z"  /> <path d="M8 13v-8.5a1.5 1.5 0 0 1 3 0v7.5" /> <path d="M11 11.5v-2a1.5 1.5 0 1 1 3 0v2.5" /> <path d="M14 10.5a1.5 1.5 0 0 1 3 0v1.5" /> <path d="M17 11.5a1.5 1.5 0 0 1 3 0v4.5a6 6 0 0 1 -6 6h-2h.208a6 6 0 0 1 -5.012 -2.7a69.74 69.74 0 0 1 -.196 -.3c-.312 -.479 -1.407 -2.388 -3.286 -5.728a1.5 1.5 0 0 1 .536 -2.022a1.867 1.867 0 0 1 2.28 .28l1.47 1.47" /></svg><b>Point and move</b><span>paint a trail</span></li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z"  /> <path d="M8 13v-7.5a1.5 1.5 0 0 1 3 0v6.5" /> <path d="M11 5.5v-2a1.5 1.5 0 1 1 3 0v8.5" /> <path d="M14 5.5a1.5 1.5 0 0 1 3 0v6.5" /> <path d="M17 7.5a1.5 1.5 0 0 1 3 0v8.5a6 6 0 0 1 -6 6h-2h.208a6 6 0 0 1 -5.012 -2.7a69.74 69.74 0 0 1 -.196 -.3c-.312 -.479 -1.407 -2.388 -3.286 -5.728a1.5 1.5 0 0 1 .536 -2.022a1.867 1.867 0 0 1 2.28 .28l1.47 1.47" /></svg><b>Open your hand</b><span>push a ring</span></li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z"  /> <path d="M8 13v-8.5a1.5 1.5 0 0 1 3 0v7.5" /> <path d="M11 11.5v-2a1.5 1.5 0 0 1 3 0v2.5" /> <path d="M14 10.5a1.5 1.5 0 0 1 3 0v1.5" /> <path d="M17 11.5a1.5 1.5 0 0 1 3 0v4.5a6 6 0 0 1 -6 6h-2h.208a6 6 0 0 1 -5.012 -2.7l-.196 -.3c-.312 -.479 -1.407 -2.388 -3.286 -5.728a1.5 1.5 0 0 1 .536 -2.022a1.867 1.867 0 0 1 2.28 .28l1.47 1.47" /> <path d="M2.541 5.594a13.487 13.487 0 0 1 2.46 -1.427" /> <path d="M14 3.458c1.32 .354 2.558 .902 3.685 1.612" /></svg><b>Two hands apart</b><span>mirror it all</span></li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z"  /> <path d="M8 11v-3.5a1.5 1.5 0 0 1 3 0v2.5" /> <path d="M11 9.5v-3a1.5 1.5 0 0 1 3 0v3.5" /> <path d="M14 7.5a1.5 1.5 0 0 1 3 0v2.5" /> <path d="M17 9.5a1.5 1.5 0 0 1 3 0v4.5a6 6 0 0 1 -6 6h-2h.208a6 6 0 0 1 -5.012 -2.7l-.196 -.3c-.312 -.479 -1.407 -2.388 -3.286 -5.728a1.5 1.5 0 0 1 .536 -2.022a1.867 1.867 0 0 1 2.28 .28l1.47 1.47" /></svg><b>Hold a fist</b><span>wipe it clean</span></li>
+    </ul>
+    <p id="tutFoot">Flashing light. Brightness is rate limited.</p>
+  </div>
+</div>
 
 <input type="file" id="file" accept="audio/*" hidden>
 <script src="engine.js"></script>

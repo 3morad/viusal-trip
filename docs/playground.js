@@ -12,7 +12,8 @@ const renderer = E.makeRenderer(glCv, 1.0);
 /* ---------- gesture state ---------- */
 const G     = { pinch: 0, spread: 0, hueOff: 0, roll: 0, gain: 0 };
 const aim   = { pinch: 0, spread: 0, hueOff: 0, roll: 0, gain: 0 };
-let sceneId = 0, hold = false, handsOn = false, landmarks = [];
+const sceneId = 0;   // one base field; everything else is placed by hand
+let hold = false, handsOn = false, landmarks = [];
 
 /* Shapes the hands have placed. The base field runs without them. */
 const MAXITEM = E.MAXITEM;
@@ -67,21 +68,7 @@ const filt = { pinch: OneEuro(1.2, 0.02), spread: OneEuro(1.2, 0.02),
 /* ---------- hud ---------- */
 const dot = $('dot'), chordEl = $('chord'), bpmEl = $('bpm'), hintEl = $('hint'), countEl = $('count');
 const tMic = $('tMic'), tHands = $('tHands'), tFile = $('tFile');
-const SCENES = ['trails', 'fractal', 'field'];
-const sceneBox = $('scenes');
-SCENES.forEach(function (name, i) {
-  const b = document.createElement('button');
-  b.className = 'sbtn'; b.type = 'button'; b.textContent = name;
-  b.setAttribute('aria-pressed', String(i === 0));
-  b.addEventListener('click', function () { setScene(i); });
-  sceneBox.appendChild(b);
-});
-function setScene(i) {
-  sceneId = ((i % 3) + 3) % 3;
-  [].forEach.call(sceneBox.children, function (b, k) { b.setAttribute('aria-pressed', String(k === sceneId)); });
-  renderer && renderer.alloc();
-  poke();
-}
+const tut = $('tut'), tutTop = $('tutTop');
 E.hooks.onSource = function (label, kind) {
   tMic.setAttribute('aria-pressed', String(kind === 'mic'));
   tFile.setAttribute('aria-pressed', String(kind === 'file'));
@@ -108,13 +95,38 @@ const d3 = function (a, b) { const x=a.x-b.x, y=a.y-b.y, z=(a.z||0)-(b.z||0); re
 
 let landmarker = null, handTimer = 0;
 
-async function startHands() {
-  if (landmarker) {
-    handsOn = !handsOn;
-    tHands.setAttribute('aria-pressed', String(handsOn));
-    if (!handsOn) landmarks = [];
+let armed = false;
+async function armInputs() {
+  if (armed) return; armed = true;
+  const A = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+  const V = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
+  let stream = null, note = '';
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: A, video: V });
+  } catch (e) {
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: V }); note = 'no mic'; }
+    catch (e2) {
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: A }); note = 'no camera'; }
+      catch (e3) { note = 'blocked'; }
+    }
+  }
+  if (!stream) {
+    tutTop.textContent = (window.self !== window.top)
+      ? 'this frame blocks the camera. drag to draw instead'
+      : 'camera and mic declined. drag to draw instead';
+    tutTop.classList.add('done');
+    tMic.disabled = true; tHands.disabled = true;
     return;
   }
+  const aud = stream.getAudioTracks(), vid = stream.getVideoTracks();
+  if (aud.length) { try { await E.useAudioStream(new MediaStream(aud)); } catch (e) {} }
+  if (vid.length) { await startHands(new MediaStream(vid)); }
+  tutTop.textContent = note ? note + '. reach into the screen' : 'reach into the screen';
+  tutTop.classList.add('done');
+}
+
+async function startHands(stream) {
+  if (landmarker) { handsOn = !handsOn; tHands.setAttribute('aria-pressed', String(handsOn)); if (!handsOn) landmarks = []; return; }
   tHands.classList.add('busy'); tHands.textContent = 'loading';
   try {
     const vision = await import('./vendor/vision_bundle.mjs');
@@ -123,10 +135,7 @@ async function startHands() {
       baseOptions: { modelAssetPath: './vendor/hand_landmarker.task', delegate: 'GPU' },
       numHands: 2, runningMode: 'VIDEO'
     });
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480, facingMode: 'user' }
-    });
-    cam.srcObject = stream;
+    cam.srcObject = stream || await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
     await cam.play();
     handsOn = true;
     tHands.classList.remove('busy');
@@ -138,9 +147,6 @@ async function startHands() {
     tHands.classList.remove('busy');
     tHands.textContent = 'no camera';
     tHands.disabled = true;
-    hintEl.textContent = (window.self !== window.top)
-      ? 'camera blocked in this frame'
-      : 'camera unavailable';
   }
 }
 
@@ -271,8 +277,7 @@ addEventListener('pointerup', function (e) {
 /* ---------- keys ---------- */
 addEventListener('keydown', function (e) {
   const k = e.key.toLowerCase();
-  if (k === '1' || k === '2' || k === '3') setScene(+k - 1);
-  else if (k === 'h') startHands();
+  if (k === 'h') armInputs();
   else if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(function () {}); }
   else if (k === ' ') { e.preventDefault(); hold = !hold; }
   else if (k === 'm') tMic.click();
@@ -281,16 +286,10 @@ addEventListener('keydown', function (e) {
 });
 
 /* ---------- boot: it is already running. Inputs are opt in. ---------- */
-tMic.addEventListener('click', async function () {
-  if (F.source === 'mic') return;
-  tMic.classList.add('busy');
-  const ok = await E.enableMic();
-  tMic.classList.remove('busy');
-  if (!ok) { tMic.textContent = 'no mic'; tMic.disabled = true; }
-});
+tMic.addEventListener('click', function () { armInputs(); });
 tFile.addEventListener('click', function () { fileIn.click(); });
 fileIn.addEventListener('change', function (e) { if (e.target.files[0]) E.playFile(e.target.files[0]); });
-tHands.addEventListener('click', function () { startHands(); });
+tHands.addEventListener('click', function () { armInputs(); });
 if (E.micBlocked()) { tMic.disabled = true; tMic.textContent = 'no mic'; }
 
 addEventListener('dragover', function (e) { e.preventDefault(); });
@@ -300,9 +299,11 @@ addEventListener('drop', function (e) {
   if (f) E.playFile(f);
 });
 
-const notice = $('notice');
-setTimeout(function () { notice.classList.add('gone'); }, 5200);
-setTimeout(function () { notice.remove(); }, 6600);
+['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+  addEventListener(ev, armInputs, { once: false, passive: true });
+});
+setTimeout(function () { tut.classList.add('gone'); }, 60000);
+setTimeout(function () { tut.remove(); }, 62000);
 
 /* ---------- loop ---------- */
 let t0 = performance.now(), last = t0;
