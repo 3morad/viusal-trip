@@ -26,3 +26,15 @@ cd docs && python3 -m http.server 8000
 Then open `http://localhost:8000`. Microphone capture needs localhost or https,
 and it cannot work inside a cross origin frame that withholds the permission,
 which is why the hosted artifact leads with the file input instead.
+
+## Deploying
+
+`vercel.json` serves `docs/` at the site root, and `.vercelignore` keeps the
+artifact fragment and the build script off the public site.
+
+```sh
+npx vercel --prod        # from the repo root
+```
+
+`npx vercel` without `--prod` publishes a preview under a hashed URL and leaves
+the production domain unassigned, which is what a 404 on the bare domain means.

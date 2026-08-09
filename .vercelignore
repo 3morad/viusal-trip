@@ -1,0 +1,4 @@
+# body.html is the artifact fragment and build.sh regenerates index.html from it.
+# Neither belongs on the public site; index.html is self contained.
+docs/body.html
+docs/build.sh
