@@ -68,12 +68,30 @@ const filt = { pinch: OneEuro(1.2, 0.02), spread: OneEuro(1.2, 0.02),
 /* ---------- hud ---------- */
 const dot = $('dot'), chordEl = $('chord'), bpmEl = $('bpm'), hintEl = $('hint'), countEl = $('count');
 const tMic = $('tMic'), tHands = $('tHands'), tFile = $('tFile');
+const tMusic = $('tMusic'), tSys = $('tSys'), devs = $('devs'), lvl = $('lvl').firstElementChild;
+
+/* Element meters, on D. When something looks wrong these say whether the
+   picture is at fault or the signal driving it never arrived. */
+const METERS = ['kick', 'bass', 'snare', 'hat', 'melody'];
+const metersEl = $('meters'), bars = {}, nums = {};
+METERS.forEach(function (k) {
+  const row = document.createElement('div'), name = document.createElement('span');
+  const track = document.createElement('u'), fill = document.createElement('b');
+  const num = document.createElement('span');
+  name.textContent = k; track.appendChild(fill);
+  row.appendChild(name); row.appendChild(track); row.appendChild(num);
+  metersEl.appendChild(row);
+  bars[k] = fill; nums[k] = num;
+});
 const tut = $('tut'), tutTop = $('tutTop');
 E.hooks.onSource = function (label, kind) {
   tMic.setAttribute('aria-pressed', String(kind === 'mic'));
   tFile.setAttribute('aria-pressed', String(kind === 'file'));
-  tMic.classList.remove('busy');
+  tMusic.setAttribute('aria-pressed', String(kind === 'loop'));
+  tSys.setAttribute('aria-pressed', String(kind === 'system'));
+  tMic.classList.remove('busy'); tMusic.classList.remove('busy'); tSys.classList.remove('busy');
   if (kind === 'file') tFile.textContent = label.length > 14 ? label.slice(0, 12) + '..' : label;
+  if (kind === 'loop') tMusic.textContent = label.length > 14 ? label.slice(0, 12) + '..' : label;
 };
 E.hooks.onHint = function (msg) { hintEl.textContent = String(msg).replace(/<[^>]+>/g, ''); };
 
@@ -322,16 +340,56 @@ addEventListener('keydown', function (e) {
   else if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(function () {}); }
   else if (k === ' ') { e.preventDefault(); hold = !hold; }
   else if (k === 'm') tMic.click();
+  else if (k === 'd') metersEl.classList.toggle('on');
   else if (k === 'c') clearItems();
   else if (k === 'z') { items.pop(); countEl.textContent = items.length || ''; }
 });
 
 /* ---------- boot: it is already running. Inputs are opt in. ---------- */
+/* Pick the input the music is routed to. On Windows, send Spotify to its own
+   output device in the volume mixer and choose that device here: what arrives
+   is the music by itself, with nothing else the machine is playing mixed in. */
+const LOOPY = /cable|loopback|stereo ?mix|voicemeeter|what ?u ?hear|blackhole|virtual/i;
+let devOpen = false;
+function closeDevs() { devOpen = false; devs.classList.remove('on'); devs.textContent = ''; }
+async function openDevs() {
+  if (devOpen) { closeDevs(); return; }
+  tMusic.classList.add('busy');
+  let list = [];
+  try { list = await E.listInputs(); } catch (e) {}
+  tMusic.classList.remove('busy');
+  devs.textContent = '';
+  if (!list.length) {
+    const p = document.createElement('p');
+    p.textContent = 'No inputs available. Allow audio access, then try again.';
+    devs.appendChild(p);
+  } else {
+    list.sort(function (a, b) { return (LOOPY.test(b.label) ? 1 : 0) - (LOOPY.test(a.label) ? 1 : 0); });
+    const p = document.createElement('p');
+    p.textContent = 'Pick the device your music plays into';
+    devs.appendChild(p);
+    list.forEach(function (d) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = d.label;
+      b.addEventListener('click', function () { closeDevs(); E.useDevice(d.id, d.label); });
+      devs.appendChild(b);
+    });
+  }
+  devOpen = true; devs.classList.add('on');
+}
+tMusic.addEventListener('click', openDevs);
+tSys.addEventListener('click', function () { tSys.classList.add('busy'); E.useSystemAudio(); });
+addEventListener('pointerdown', function (e) {
+  if (devOpen && !e.target.closest('#devs') && e.target !== tMusic) closeDevs();
+});
+
 tMic.addEventListener('click', function () { if (!haveAudio) request('audio'); });
 tFile.addEventListener('click', function () { fileIn.click(); });
 fileIn.addEventListener('change', function (e) { if (e.target.files[0]) E.playFile(e.target.files[0]); });
 tHands.addEventListener('click', function () { haveVideo ? startHands(null) : request('video'); });
 if (E.micBlocked()) { tMic.disabled = true; tMic.textContent = 'no mic'; }
+if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { tSys.disabled = true; }
 
 addEventListener('dragover', function (e) { e.preventDefault(); });
 addEventListener('drop', function (e) {
@@ -363,7 +421,7 @@ function tick(now) {
 
   packItems(now / 1000);
 
-  const drive = F.bands[0] * 0.55 + F.bands[1] * 0.30 + F.rms * 0.15;
+  const drive = F.kick * 0.42 + F.bass * 0.22 + F.snare * 0.14 + F.beat * 0.12 + F.rms * 0.10;
   const bright = E.limitFlash(clamp(drive, 0, 1), now);
   if (renderer) renderer.draw(t, bright, sceneId, G);
   drawHands();
@@ -372,7 +430,16 @@ function tick(now) {
   chordEl.textContent = E.NOTE[F.chord.root] + (F.chord.quality === 'min' ? 'm' : '');
   dot.style.background = 'hsl(' + hue + ',70%,58%)';
   dot.style.color = 'hsl(' + hue + ',70%,58%)';
+  dot.style.transform = 'scale(' + (1 + F.beat * 0.55) + ')';   // ticks on the beat
   bpmEl.textContent = Math.round(F.bpm);
+  bpmEl.classList.toggle('lock', F.bpmLock > 0.45);
+  lvl.style.width = (clamp(F.level * 2.2, 0, 1) * 100) + '%';
+  if (metersEl.classList.contains('on')) {
+    METERS.forEach(function (k) {
+      bars[k].style.width = (clamp(F[k], 0, 1) * 100) + '%';
+      nums[k].textContent = Math.round(F[k] * 100);
+    });
+  }
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
