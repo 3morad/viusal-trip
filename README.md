@@ -14,15 +14,15 @@ if you let it.
 
 ## Running it
 
-`docs/index.html` is the artifact body; the artifact host supplies the document
-shell. For anywhere else, generate a complete document from the same source:
+`docs/body.html` is the artifact body, which the artifact host wraps in a
+document shell. `docs/index.html` is that same source wrapped into a complete
+page, regenerated with `./docs/build.sh`, and is what any normal host should
+serve.
 
 ```sh
-./docs/build-standalone.sh          # writes docs/standalone.html
 cd docs && python3 -m http.server 8000
 ```
 
-Then open `http://localhost:8000/standalone.html`. Microphone capture needs
-localhost or https, and it cannot work inside a cross origin frame that
-withholds the permission, which is why the hosted artifact leads with the
-file input instead.
+Then open `http://localhost:8000`. Microphone capture needs localhost or https,
+and it cannot work inside a cross origin frame that withholds the permission,
+which is why the hosted artifact leads with the file input instead.
