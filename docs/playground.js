@@ -95,57 +95,74 @@ const d3 = function (a, b) { const x=a.x-b.x, y=a.y-b.y, z=(a.z||0)-(b.z||0); re
 
 let landmarker = null, handTimer = 0;
 
-/* Safari only counts a permission request that is issued synchronously
-   inside the gesture that triggered it. Anything after an await has already
-   lost that activation, so each tap makes exactly one request and a failure
-   arms the next strategy for the following tap. */
+/* Safari only counts a permission request issued synchronously inside the
+   gesture that triggered it, so every request below is called straight from
+   an event handler and never after an await. Each input is tracked on its
+   own: granting one must not close the door on the other. */
 const A_CONS = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 const V_CONS = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
-const STRATS = [
-  { label: 'camera and mic', want: function () { return { audio: A_CONS, video: V_CONS }; } },
-  { label: 'camera',         want: function () { return { video: V_CONS }; } },
-  { label: 'mic',            want: function () { return { audio: A_CONS }; } }
-];
-let armed = false, strat = 0;
+let haveAudio = false, haveVideo = false, busy = false, askedBoth = false;
 
-function armInputs() {
-  if (armed || strat >= STRATS.length) return;
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    strat = STRATS.length;
-    say(window.isSecureContext ? 'this browser has no camera access' : 'needs https', true);
-    return;
-  }
-  armed = true;
+function supported() {
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) return true;
+  say(window.isSecureContext ? 'this browser has no camera access' : 'needs https', true);
+  return false;
+}
+
+function request(kind) {
+  if (busy || !supported()) return;
+  const cons = kind === 'both' ? { audio: A_CONS, video: V_CONS }
+             : kind === 'audio' ? { audio: A_CONS }
+             : { video: V_CONS };
+  busy = true;
   let req;
-  try { req = navigator.mediaDevices.getUserMedia(STRATS[strat].want()); }
-  catch (err) { onDenied(err); return; }
-  req.then(onStream, onDenied);
+  try { req = navigator.mediaDevices.getUserMedia(cons); }
+  catch (err) { busy = false; denied(err, kind); return; }
+  req.then(function (st) { busy = false; got(st, kind); },
+           function (err) { busy = false; denied(err, kind); });
 }
 
-function say(msg, done) {
-  tutTop.textContent = msg;
-  tutTop.classList.toggle('done', !!done);
+/* first touch asks for both at once, so it is one dialog and not two */
+function armInputs() {
+  if (askedBoth || haveAudio || haveVideo) return;
+  askedBoth = true;
+  request('both');
 }
 
-function onDenied(err) {
+function say(msg, done) { tutTop.textContent = msg; tutTop.classList.toggle('done', !!done); }
+
+function got(stream, kind) {
+  const aud = stream.getAudioTracks(), vid = stream.getVideoTracks();
+  if (aud.length && !haveAudio) {
+    haveAudio = true;
+    E.useAudioStream(new MediaStream(aud)).catch(function () {});
+  }
+  if (vid.length && !haveVideo) {
+    haveVideo = true;
+    startHands(new MediaStream(vid));
+  }
+  report();
+}
+
+function denied(err, kind) {
   const why = (err && err.name) ? err.name.replace(/Error$/, '') : 'failed';
-  armed = false;
-  strat++;
-  if (strat < STRATS.length) {
-    say(why + '. tap again for ' + STRATS[strat].label);
+  if (kind === 'both') {
+    // a combined refusal says nothing about either one alone, so offer them
+    say(why + '. tap for camera, or press mic');
+    tHands.textContent = 'camera';
+  } else if (kind === 'audio') {
+    tMic.textContent = 'no mic'; tMic.disabled = true; report(why);
   } else {
-    say(why + '. drag to draw instead', true);
-    tMic.disabled = true;
-    tHands.disabled = true;
+    tHands.textContent = 'no camera'; tHands.disabled = true; report(why);
   }
 }
 
-async function onStream(stream) {
-  const aud = stream.getAudioTracks(), vid = stream.getVideoTracks();
-  if (aud.length) { try { await E.useAudioStream(new MediaStream(aud)); } catch (e) {} }
-  if (vid.length) { await startHands(new MediaStream(vid)); }
-  const missing = !vid.length ? 'no camera. ' : (!aud.length ? 'no mic. ' : '');
-  say(missing + 'reach into the screen', true);
+function report(why) {
+  tMic.setAttribute('aria-pressed', String(haveAudio));
+  if (haveAudio && haveVideo) say('reach into the screen', true);
+  else if (haveVideo) say('no mic. reach into the screen', true);
+  else if (haveAudio) say((why ? why + '. ' : '') + 'press camera for hands', false);
+  else say((why ? why + '. ' : '') + 'drag to draw instead', true);
 }
 
 async function startHands(stream) {
@@ -310,10 +327,10 @@ addEventListener('keydown', function (e) {
 });
 
 /* ---------- boot: it is already running. Inputs are opt in. ---------- */
-tMic.addEventListener('click', function () { armInputs(); });
+tMic.addEventListener('click', function () { if (!haveAudio) request('audio'); });
 tFile.addEventListener('click', function () { fileIn.click(); });
 fileIn.addEventListener('change', function (e) { if (e.target.files[0]) E.playFile(e.target.files[0]); });
-tHands.addEventListener('click', function () { armInputs(); });
+tHands.addEventListener('click', function () { haveVideo ? startHands(null) : request('video'); });
 if (E.micBlocked()) { tMic.disabled = true; tMic.textContent = 'no mic'; }
 
 addEventListener('dragover', function (e) { e.preventDefault(); });
