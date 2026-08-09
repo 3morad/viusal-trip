@@ -50,7 +50,28 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 .tog[aria-pressed="true"]{color:#0A0C11;background:var(--ink);border-color:var(--ink)}
 .tog[disabled]{opacity:.4;cursor:default}
 .tog.busy{color:var(--accent)}
-.hud-bl{pointer-events:auto}
+.hud-bl{pointer-events:auto;flex-wrap:wrap;max-width:calc(100vw - 36px)}
+
+/* level meter: proof that something is actually coming in */
+#lvl{display:inline-block;width:34px;height:3px;background:#262B36;border-radius:2px;overflow:hidden}
+#lvl i{display:block;height:100%;width:0;background:var(--accent);transition:width .08s linear}
+#bpm.lock{color:var(--ink)}
+
+/* input device list, only shown while choosing */
+#devs{
+  position:fixed;z-index:14;left:18px;bottom:56px;
+  width:min(320px,calc(100vw - 36px));max-height:46vh;overflow-y:auto;
+  background:rgba(6,8,13,.94);border:1px solid var(--line);border-radius:12px;
+  padding:6px;pointer-events:auto;display:none;
+}
+#devs.on{display:block}
+#devs button{
+  display:block;width:100%;text-align:left;font:inherit;letter-spacing:.06em;
+  text-transform:none;color:var(--ink);background:transparent;border:0;border-radius:8px;
+  padding:9px 10px;cursor:pointer;
+}
+#devs button:hover{background:#151A24}
+#devs p{margin:4px 8px 8px;color:#6B7382;font-size:.5938rem;letter-spacing:.09em;text-transform:uppercase;line-height:1.6}
 
 /* ---------- tutorial: shows itself, then gets out of the way ---------- */
 #tut{
@@ -86,6 +107,18 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 @media (max-height:560px){ .tut-rows li:nth-child(n+4){display:none} }
 #gstate{color:var(--accent)}
 #gstate.off{color:#4C5361}
+
+/* element meters: which part of the track is actually driving the picture */
+#meters{
+  position:fixed;z-index:12;right:18px;top:44px;width:150px;display:none;
+  font-family:var(--mono);font-size:.5938rem;letter-spacing:.09em;text-transform:uppercase;
+}
+#meters.on{display:block}
+#meters div{display:grid;grid-template-columns:44px 1fr 26px;align-items:center;gap:7px;margin-bottom:5px}
+#meters span:first-child{color:#727A89}
+#meters span:last-child{color:#727A89;text-align:right}
+#meters u{display:block;height:4px;background:#1B2029;border-radius:2px;overflow:hidden}
+#meters u b{display:block;height:100%;width:0;background:var(--accent)}
 </style>
 </head>
 <body>
@@ -95,8 +128,10 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 <video id="cam" playsinline muted></video>
 
 <div id="hud">
-  <div class="hud-tl"><span class="dot" id="dot"></span><span id="chord">--</span><span id="bpm"></span></div>
+  <div class="hud-tl"><span class="dot" id="dot"></span><span id="chord">--</span><span id="bpm"></span><span id="lvl"><i></i></span></div>
   <div class="hud-bl">
+    <button class="tog" id="tMusic" type="button" aria-pressed="false">music</button>
+    <button class="tog" id="tSys"   type="button" aria-pressed="false">system</button>
     <button class="tog" id="tMic"   type="button" aria-pressed="false">mic</button>
     <button class="tog" id="tHands" type="button" aria-pressed="false">hands</button>
     <button class="tog" id="tFile"  type="button" aria-pressed="false">file</button>
@@ -117,6 +152,10 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
     <p id="tutFoot">Flashing light. Brightness is rate limited.</p>
   </div>
 </div>
+
+<div id="meters"></div>
+
+<div id="devs"></div>
 
 <input type="file" id="file" accept="audio/*" hidden>
 <script src="engine.js"></script>
