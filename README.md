@@ -33,9 +33,19 @@ cross origin frame that withholds the permission.
 
 ## Controls
 
-Hands first, pointer as fallback. Pinch drives zoom and warp, hand height
-shifts hue, wrist roll spins the field, closing your hand holds the trails,
-and two hands moving apart opens the kaleidoscope. A fist holds, an open palm
-resets, two fingers changes scene.
+The base field runs on its own. Everything else you put there yourself.
 
-Keys: `1` `2` `3` scene, `H` hands on or off, `F` fullscreen, `Space` hold.
+| Gesture | Adds |
+|---|---|
+| Pinch thumb and finger | drops an orb that stays and breathes with the low end |
+| Point one finger and move | paints a trail of shards that fade over a few seconds |
+| Open your whole hand | pushes a ring out from your palm |
+| Two hands moving apart | mirrors everything already placed |
+| Close a fist and hold | wipes back to the base |
+
+Hand height shifts hue, wrist roll spins the field, a closing hand holds the
+trails. With no camera the pointer does the same work: click drops an orb,
+drag paints.
+
+Keys: `1` `2` `3` base, `H` hands, `M` mic, `F` fullscreen, `Space` hold,
+`Z` undo, `C` clear.

@@ -224,12 +224,44 @@ const COMMON = `
 precision highp float;
 uniform vec2 uRes; uniform float uT,uBass,uMid,uAir,uPhase,uHue,uBright;
 uniform float uPinch,uSpread,uHueOff,uRoll,uGain;
+#define MAXITEM 32
+uniform int uCount;
+uniform vec4 uItemA[MAXITEM];   // xy position, z size, w type
+uniform vec4 uItemB[MAXITEM];   // x age seconds, y hue, z strength
 float h21(vec2 p){ return fract(sin(dot(p,vec2(41.3,289.1)))*43758.5453); }
 float nz(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
 float fbm(vec2 p){ float s=0.0,a=0.5; for(int i=0;i<5;i++){ s+=a*nz(p); p*=2.03; a*=0.5; } return s; }
 vec3 pal(float t){ return 0.5+0.5*cos(6.28318*(t+uHueOff+vec3(0.0,0.33,0.67))); }
 vec2 toUV(vec2 p){ return vec2(p.x*uRes.y/uRes.x, p.y)+0.5; }
+/* Everything the hands put into the scene. The base field is what runs
+   without them; each item is placed, then lives on its own. */
+vec3 items(vec2 p){
+  vec3 acc = vec3(0.0);
+  for(int i = 0; i < MAXITEM; i++){
+    if(i >= uCount) break;
+    vec4 a = uItemA[i], b = uItemB[i];
+    float d = length(p - a.xy);
+    float age = b.x, hue = b.y, str = b.z, sz = max(a.z, 0.004);
+    float e = 0.0;
+    if(a.w < 0.5){
+      // orb: breathes with the low end
+      float r = sz*(1.0 + uBass*0.55);
+      e = exp(-(d*d)/(r*r)) * (0.55 + uBass*1.5);
+    } else if(a.w < 1.5){
+      // ring: expands from where the palm opened, then thins out
+      float rad = age*0.55;
+      e = exp(-pow((d - rad)/max(sz*0.5, 0.006), 2.0)) * exp(-age*0.75) * (0.6 + uMid);
+    } else {
+      // shard: a radial sliver, drawn by a finger
+      float ang = atan(p.y - a.xy.y, p.x - a.xy.x);
+      float w = 0.5 + 0.5*cos((ang - hue*6.28318)*6.0);
+      e = pow(w, 22.0) * exp(-d*d/(sz*sz*9.0)) * (0.5 + uAir*1.3);
+    }
+    acc += pal(hue + d*0.30) * e * str;
+  }
+  return acc*0.085;
+}
 vec2 fold(vec2 p){
   if(uSpread < 0.02) return p;
   float seg = 2.0 + floor(uSpread*7.0);
@@ -254,7 +286,7 @@ vec3 src0(vec2 p){
   float r = length(p), a = atan(p.y,p.x);
   float spokes = pow(abs(sin(a*5.0 + uT*0.25)), 26.0);
   float ring = exp(-pow((r - fract(uPhase)*0.95)*20.0, 2.0));
-  float e = spokes*0.30*(0.25+uMid) + ring*(0.18+uBass*0.75);
+  float e = spokes*0.105*(0.25+uMid) + ring*(0.085+uBass*0.42);
   return pal(uHue + r*0.35 + uT*0.02)*e;
 }
 vec3 srcHero(vec2 p){
@@ -307,15 +339,15 @@ void main(){
   vec2 p = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;
   vec3 col;
   if(uScene == 1){
-    col = march(p);
+    col = march(p) + items(fold(p))*2.4;
   } else if(uScene == 0){
     float sc = 1.0 - 0.011 - uBass*0.012 - uPinch*0.020;
     float an = 0.0035 + uMid*0.009 + uRoll*0.030;
     vec2 q = mat2(cos(an),-sin(an),sin(an),cos(an)) * (p*sc);
-    col = texture(uPrev, toUV(q)).rgb*(0.940 + uGain*0.048) + src0(fold(p));
+    col = texture(uPrev, toUV(q)).rgb*(0.940 + uGain*0.048) + src0(fold(p)) + items(fold(p));
   } else if(uScene == 2){
     vec2 q = p - curl(p)*0.0045*(1.0 + uBass*1.6 + uPinch*3.0);
-    col = texture(uPrev, toUV(q)).rgb*(0.950 + uGain*0.040) + src2(fold(p));
+    col = texture(uPrev, toUV(q)).rgb*(0.950 + uGain*0.040) + src2(fold(p)) + items(fold(p));
   } else {
     float sc = 1.0 - 0.0055 - uBass*0.006;
     float an = 0.0016 + uMid*0.0035;
@@ -355,11 +387,11 @@ function program(gl, fs){
 }
 function uniforms(gl, p){
   const names = ['uRes','uT','uBass','uMid','uAir','uPhase','uHue','uBright','uPrev','uScene','uSrc',
-                 'uPinch','uSpread','uHueOff','uRoll','uGain'];
+                 'uPinch','uSpread','uHueOff','uRoll','uGain','uCount','uItemA','uItemB'];
   const u = {}; for(const n of names) u[n] = gl.getUniformLocation(p, n);
   return u;
 }
-const NEUTRAL = { pinch:0, spread:0, hueOff:0, roll:0, gain:0 };
+const NEUTRAL = { pinch:0, spread:0, hueOff:0, roll:0, gain:0, count:0 };
 function setCommon(gl, u, w, h, t, bright, g){
   g = g || NEUTRAL;
   gl.uniform1f(u.uPinch,  g.pinch  || 0);
@@ -367,6 +399,9 @@ function setCommon(gl, u, w, h, t, bright, g){
   gl.uniform1f(u.uHueOff, g.hueOff || 0);
   gl.uniform1f(u.uRoll,   g.roll   || 0);
   gl.uniform1f(u.uGain,   g.gain   || 0);
+  const n = g.count | 0;
+  gl.uniform1i(u.uCount, n);
+  if (n > 0) { gl.uniform4fv(u.uItemA, g.itemA); gl.uniform4fv(u.uItemB, g.itemB); }
   gl.uniform2f(u.uRes, w, h);
   gl.uniform1f(u.uT, t);
   gl.uniform1f(u.uBass, F.bands[0]*0.6 + F.bands[1]*0.4);
@@ -451,6 +486,6 @@ global.ChromaEngine = {
   hasInput: function () { return !!analyser; },
   enableMic: enableMic, playFile: playFile, micBlocked: micBlocked,
   limitFlash: limitFlash,
-  makeRenderer: makeRenderer, sizeCanvas: sizeCanvas
+  makeRenderer: makeRenderer, sizeCanvas: sizeCanvas, MAXITEM: 32
 };
 })(window);
