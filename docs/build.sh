@@ -17,5 +17,5 @@ cd "$(dirname "$0")"
   cat body.html
   printf '%s\n' '</body>'
   printf '%s\n' '</html>'
-} > index.html
-echo "docs/index.html: $(wc -c < index.html) bytes"
+} > spec.html
+echo "docs/spec.html: $(wc -c < spec.html) bytes"

@@ -12,29 +12,30 @@ the gesture mappings, the renderer and the build order. The page runs a live
 WebGL2 prototype of the core claim, and will drive itself from your microphone
 if you let it.
 
-## Running it
+## Layout
 
-`docs/body.html` is the artifact body, which the artifact host wraps in a
-document shell. `docs/index.html` is that same source wrapped into a complete
-page, regenerated with `./docs/build.sh`, and is what any normal host should
-serve.
+- `docs/index.html` plus `engine.js` and `playground.js` are the playground: a
+  fullscreen visualiser driven by audio and hand tracking.
+- `docs/vendor/` holds the MediaPipe runtime and hand model, vendored so there
+  is no CDN dependency and no network call at runtime.
+- `docs/spec.html` is the written build spec, generated from `body.html` by
+  `build.sh`. It carries its own inline copy of the engine and is a frozen
+  reference; the playground is the live code.
+
+## Running it
 
 ```sh
 cd docs && python3 -m http.server 8000
 ```
 
-Then open `http://localhost:8000`. Microphone capture needs localhost or https,
-and it cannot work inside a cross origin frame that withholds the permission,
-which is why the hosted artifact leads with the file input instead.
+Microphone and camera both need localhost or https, and neither works inside a
+cross origin frame that withholds the permission.
 
-## Deploying
+## Controls
 
-`vercel.json` serves `docs/` at the site root, and `.vercelignore` keeps the
-artifact fragment and the build script off the public site.
+Hands first, pointer as fallback. Pinch drives zoom and warp, hand height
+shifts hue, wrist roll spins the field, closing your hand holds the trails,
+and two hands moving apart opens the kaleidoscope. A fist holds, an open palm
+resets, two fingers changes scene.
 
-```sh
-npx vercel --prod        # from the repo root
-```
-
-`npx vercel` without `--prod` publishes a preview under a hashed URL and leaves
-the production domain unassigned, which is what a 404 on the bare domain means.
+Keys: `1` `2` `3` scene, `H` hands on or off, `F` fullscreen, `Space` hold.
