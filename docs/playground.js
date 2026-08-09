@@ -12,7 +12,8 @@ const renderer = E.makeRenderer(glCv, 1.0);
 /* ---------- gesture state ---------- */
 const G     = { pinch: 0, spread: 0, hueOff: 0, roll: 0, gain: 0 };
 const aim   = { pinch: 0, spread: 0, hueOff: 0, roll: 0, gain: 0 };
-let sceneId = 0, hold = false, handsOn = false, landmarks = [];
+const sceneId = 0;   // one base field; everything else is placed by hand
+let hold = false, handsOn = false, landmarks = [];
 
 /* Shapes the hands have placed. The base field runs without them. */
 const MAXITEM = E.MAXITEM;
@@ -67,21 +68,7 @@ const filt = { pinch: OneEuro(1.2, 0.02), spread: OneEuro(1.2, 0.02),
 /* ---------- hud ---------- */
 const dot = $('dot'), chordEl = $('chord'), bpmEl = $('bpm'), hintEl = $('hint'), countEl = $('count');
 const tMic = $('tMic'), tHands = $('tHands'), tFile = $('tFile');
-const SCENES = ['trails', 'fractal', 'field'];
-const sceneBox = $('scenes');
-SCENES.forEach(function (name, i) {
-  const b = document.createElement('button');
-  b.className = 'sbtn'; b.type = 'button'; b.textContent = name;
-  b.setAttribute('aria-pressed', String(i === 0));
-  b.addEventListener('click', function () { setScene(i); });
-  sceneBox.appendChild(b);
-});
-function setScene(i) {
-  sceneId = ((i % 3) + 3) % 3;
-  [].forEach.call(sceneBox.children, function (b, k) { b.setAttribute('aria-pressed', String(k === sceneId)); });
-  renderer && renderer.alloc();
-  poke();
-}
+const tut = $('tut'), tutTop = $('tutTop');
 E.hooks.onSource = function (label, kind) {
   tMic.setAttribute('aria-pressed', String(kind === 'mic'));
   tFile.setAttribute('aria-pressed', String(kind === 'file'));
@@ -108,13 +95,79 @@ const d3 = function (a, b) { const x=a.x-b.x, y=a.y-b.y, z=(a.z||0)-(b.z||0); re
 
 let landmarker = null, handTimer = 0;
 
-async function startHands() {
-  if (landmarker) {
-    handsOn = !handsOn;
-    tHands.setAttribute('aria-pressed', String(handsOn));
-    if (!handsOn) landmarks = [];
-    return;
+/* Safari only counts a permission request issued synchronously inside the
+   gesture that triggered it, so every request below is called straight from
+   an event handler and never after an await. Each input is tracked on its
+   own: granting one must not close the door on the other. */
+const A_CONS = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+const V_CONS = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
+let haveAudio = false, haveVideo = false, busy = false, askedBoth = false;
+
+function supported() {
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) return true;
+  say(window.isSecureContext ? 'this browser has no camera access' : 'needs https', true);
+  return false;
+}
+
+function request(kind) {
+  if (busy || !supported()) return;
+  const cons = kind === 'both' ? { audio: A_CONS, video: V_CONS }
+             : kind === 'audio' ? { audio: A_CONS }
+             : { video: V_CONS };
+  busy = true;
+  let req;
+  try { req = navigator.mediaDevices.getUserMedia(cons); }
+  catch (err) { busy = false; denied(err, kind); return; }
+  req.then(function (st) { busy = false; got(st, kind); },
+           function (err) { busy = false; denied(err, kind); });
+}
+
+/* first touch asks for both at once, so it is one dialog and not two */
+function armInputs() {
+  if (askedBoth || haveAudio || haveVideo) return;
+  askedBoth = true;
+  request('both');
+}
+
+function say(msg, done) { tutTop.textContent = msg; tutTop.classList.toggle('done', !!done); }
+
+function got(stream, kind) {
+  const aud = stream.getAudioTracks(), vid = stream.getVideoTracks();
+  if (aud.length && !haveAudio) {
+    haveAudio = true;
+    E.useAudioStream(new MediaStream(aud)).catch(function () {});
   }
+  if (vid.length && !haveVideo) {
+    haveVideo = true;
+    startHands(new MediaStream(vid));
+  }
+  report();
+}
+
+function denied(err, kind) {
+  const why = (err && err.name) ? err.name.replace(/Error$/, '') : 'failed';
+  if (kind === 'both') {
+    // a combined refusal says nothing about either one alone, so offer them
+    say(why + '. tap for camera, or press mic');
+    tHands.textContent = 'camera';
+  } else if (kind === 'audio') {
+    tMic.textContent = 'no mic'; tMic.disabled = true; report(why);
+  } else {
+    tHands.textContent = 'no camera'; tHands.disabled = true; report(why);
+  }
+}
+
+function report(why) {
+  tMic.setAttribute('aria-pressed', String(haveAudio));
+  if (haveAudio && haveVideo) say('reach into the screen', true);
+  else if (haveVideo) say('no mic. reach into the screen', true);
+  else if (haveAudio) say((why ? why + '. ' : '') + 'press camera for hands', false);
+  else say((why ? why + '. ' : '') + 'drag to draw instead', true);
+}
+
+async function startHands(stream) {
+  if (landmarker) { handsOn = !handsOn; tHands.setAttribute('aria-pressed', String(handsOn)); if (!handsOn) landmarks = []; return; }
+  if (!stream) return;
   tHands.classList.add('busy'); tHands.textContent = 'loading';
   try {
     const vision = await import('./vendor/vision_bundle.mjs');
@@ -122,9 +175,6 @@ async function startHands() {
     landmarker = await vision.HandLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: './vendor/hand_landmarker.task', delegate: 'GPU' },
       numHands: 2, runningMode: 'VIDEO'
-    });
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480, facingMode: 'user' }
     });
     cam.srcObject = stream;
     await cam.play();
@@ -138,9 +188,6 @@ async function startHands() {
     tHands.classList.remove('busy');
     tHands.textContent = 'no camera';
     tHands.disabled = true;
-    hintEl.textContent = (window.self !== window.top)
-      ? 'camera blocked in this frame'
-      : 'camera unavailable';
   }
 }
 
@@ -271,8 +318,7 @@ addEventListener('pointerup', function (e) {
 /* ---------- keys ---------- */
 addEventListener('keydown', function (e) {
   const k = e.key.toLowerCase();
-  if (k === '1' || k === '2' || k === '3') setScene(+k - 1);
-  else if (k === 'h') startHands();
+  if (k === 'h') armInputs();
   else if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(function () {}); }
   else if (k === ' ') { e.preventDefault(); hold = !hold; }
   else if (k === 'm') tMic.click();
@@ -281,16 +327,10 @@ addEventListener('keydown', function (e) {
 });
 
 /* ---------- boot: it is already running. Inputs are opt in. ---------- */
-tMic.addEventListener('click', async function () {
-  if (F.source === 'mic') return;
-  tMic.classList.add('busy');
-  const ok = await E.enableMic();
-  tMic.classList.remove('busy');
-  if (!ok) { tMic.textContent = 'no mic'; tMic.disabled = true; }
-});
+tMic.addEventListener('click', function () { if (!haveAudio) request('audio'); });
 tFile.addEventListener('click', function () { fileIn.click(); });
 fileIn.addEventListener('change', function (e) { if (e.target.files[0]) E.playFile(e.target.files[0]); });
-tHands.addEventListener('click', function () { startHands(); });
+tHands.addEventListener('click', function () { haveVideo ? startHands(null) : request('video'); });
 if (E.micBlocked()) { tMic.disabled = true; tMic.textContent = 'no mic'; }
 
 addEventListener('dragover', function (e) { e.preventDefault(); });
@@ -300,9 +340,12 @@ addEventListener('drop', function (e) {
   if (f) E.playFile(f);
 });
 
-const notice = $('notice');
-setTimeout(function () { notice.classList.add('gone'); }, 5200);
-setTimeout(function () { notice.remove(); }, 6600);
+// click and touchend are the events Safari treats as activation most reliably
+['click', 'touchend', 'pointerdown', 'keydown'].forEach(function (ev) {
+  addEventListener(ev, armInputs, { passive: true });
+});
+setTimeout(function () { tut.classList.add('gone'); }, 60000);
+setTimeout(function () { tut.remove(); }, 62000);
 
 /* ---------- loop ---------- */
 let t0 = performance.now(), last = t0;

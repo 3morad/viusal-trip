@@ -33,7 +33,7 @@ cross origin frame that withholds the permission.
 
 ## Controls
 
-The base field runs on its own. Everything else you put there yourself.
+One base field runs on its own. Everything else you put there yourself.
 
 | Gesture | Adds |
 |---|---|
@@ -44,8 +44,11 @@ The base field runs on its own. Everything else you put there yourself.
 | Close a fist and hold | wipes back to the base |
 
 Hand height shifts hue, wrist roll spins the field, a closing hand holds the
-trails. With no camera the pointer does the same work: click drops an orb,
+trails. With no camera the pointer does the same work: tap drops an orb,
 drag paints.
 
-Keys: `1` `2` `3` base, `H` hands, `M` mic, `F` fullscreen, `Space` hold,
-`Z` undo, `C` clear.
+The camera and microphone are asked for together on the first tap, so it is
+one permission prompt rather than two. An on screen guide covers the gestures
+and takes itself away after a minute.
+
+Keys: `H` hands, `M` mic, `F` fullscreen, `Space` hold, `Z` undo, `C` clear.
