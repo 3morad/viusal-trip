@@ -766,6 +766,17 @@ async function playFile(file){
   }
 }
 
+// The frame that hosts this page may withhold microphone permission, and
+// the artifact runtime does exactly that. Find out before the user clicks.
+function micBlocked(){
+  if(!navigator.mediaDevices || !window.isSecureContext) return true;
+  const pp = document.permissionsPolicy || document.featurePolicy;
+  if(pp && typeof pp.allowsFeature === 'function'){
+    try { return !pp.allowsFeature('microphone'); } catch(e){}
+  }
+  return false;   // unknown, let the click settle it
+}
+
 async function enableMic(btn){
   btn.setAttribute('aria-busy','true');
   try {
@@ -789,7 +800,7 @@ async function enableMic(btn){
     } else if(err && err.name === 'InsecureContext'){
       showHint('Microphone capture needs https or localhost. Drop a file below instead.');
     } else if(framed){
-      showHint('This frame blocks microphone access. <a href="' + location.href + '" target="_blank" rel="noopener">Open in a new tab</a>, or drop a file below.');
+      showHint('This page is embedded in a frame that withholds microphone access. Use the file picker below, or run the page outside the frame.');
     } else {
       showHint('Microphone permission was declined. Allow it in the address bar and press the button again, or drop a file below.');
     }
@@ -1259,9 +1270,18 @@ function start(){ if(!raf && !REDUCE){ last = performance.now(); raf = requestAn
 function stop(){ if(raf){ cancelAnimationFrame(raf); raf = 0; } }
 document.addEventListener('visibilitychange', () => document.hidden ? stop() : start());
 
-document.getElementById('micBtn').addEventListener('click', e => enableMic(e.currentTarget));
-
 const fileInput = document.getElementById('fileInput');
+const micBtn = document.getElementById('micBtn');
+
+if(micBlocked()){
+  // Offer the primary action that actually works here rather than one that cannot.
+  micBtn.textContent = 'Play an audio file';
+  micBtn.addEventListener('click', () => fileInput.click());
+  showHint('Microphone capture is unavailable in this frame, so the file input is the way in. Drag a track anywhere, or press the button.');
+  document.getElementById('hint').style.color = 'var(--fg-3)';
+} else {
+  micBtn.addEventListener('click', e => enableMic(e.currentTarget));
+}
 const hero = document.querySelector('.hero');
 document.getElementById('dropzone').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', e => { if(e.target.files[0]) playFile(e.target.files[0]); });
