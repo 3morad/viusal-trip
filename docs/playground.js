@@ -95,38 +95,62 @@ const d3 = function (a, b) { const x=a.x-b.x, y=a.y-b.y, z=(a.z||0)-(b.z||0); re
 
 let landmarker = null, handTimer = 0;
 
-let armed = false;
-async function armInputs() {
-  if (armed) return; armed = true;
-  const A = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
-  const V = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
-  let stream = null, note = '';
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: A, video: V });
-  } catch (e) {
-    try { stream = await navigator.mediaDevices.getUserMedia({ video: V }); note = 'no mic'; }
-    catch (e2) {
-      try { stream = await navigator.mediaDevices.getUserMedia({ audio: A }); note = 'no camera'; }
-      catch (e3) { note = 'blocked'; }
-    }
-  }
-  if (!stream) {
-    tutTop.textContent = (window.self !== window.top)
-      ? 'this frame blocks the camera. drag to draw instead'
-      : 'camera and mic declined. drag to draw instead';
-    tutTop.classList.add('done');
-    tMic.disabled = true; tHands.disabled = true;
+/* Safari only counts a permission request that is issued synchronously
+   inside the gesture that triggered it. Anything after an await has already
+   lost that activation, so each tap makes exactly one request and a failure
+   arms the next strategy for the following tap. */
+const A_CONS = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+const V_CONS = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
+const STRATS = [
+  { label: 'camera and mic', want: function () { return { audio: A_CONS, video: V_CONS }; } },
+  { label: 'camera',         want: function () { return { video: V_CONS }; } },
+  { label: 'mic',            want: function () { return { audio: A_CONS }; } }
+];
+let armed = false, strat = 0;
+
+function armInputs() {
+  if (armed || strat >= STRATS.length) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    strat = STRATS.length;
+    say(window.isSecureContext ? 'this browser has no camera access' : 'needs https', true);
     return;
   }
+  armed = true;
+  let req;
+  try { req = navigator.mediaDevices.getUserMedia(STRATS[strat].want()); }
+  catch (err) { onDenied(err); return; }
+  req.then(onStream, onDenied);
+}
+
+function say(msg, done) {
+  tutTop.textContent = msg;
+  tutTop.classList.toggle('done', !!done);
+}
+
+function onDenied(err) {
+  const why = (err && err.name) ? err.name.replace(/Error$/, '') : 'failed';
+  armed = false;
+  strat++;
+  if (strat < STRATS.length) {
+    say(why + '. tap again for ' + STRATS[strat].label);
+  } else {
+    say(why + '. drag to draw instead', true);
+    tMic.disabled = true;
+    tHands.disabled = true;
+  }
+}
+
+async function onStream(stream) {
   const aud = stream.getAudioTracks(), vid = stream.getVideoTracks();
   if (aud.length) { try { await E.useAudioStream(new MediaStream(aud)); } catch (e) {} }
   if (vid.length) { await startHands(new MediaStream(vid)); }
-  tutTop.textContent = note ? note + '. reach into the screen' : 'reach into the screen';
-  tutTop.classList.add('done');
+  const missing = !vid.length ? 'no camera. ' : (!aud.length ? 'no mic. ' : '');
+  say(missing + 'reach into the screen', true);
 }
 
 async function startHands(stream) {
   if (landmarker) { handsOn = !handsOn; tHands.setAttribute('aria-pressed', String(handsOn)); if (!handsOn) landmarks = []; return; }
+  if (!stream) return;
   tHands.classList.add('busy'); tHands.textContent = 'loading';
   try {
     const vision = await import('./vendor/vision_bundle.mjs');
@@ -135,7 +159,7 @@ async function startHands(stream) {
       baseOptions: { modelAssetPath: './vendor/hand_landmarker.task', delegate: 'GPU' },
       numHands: 2, runningMode: 'VIDEO'
     });
-    cam.srcObject = stream || await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+    cam.srcObject = stream;
     await cam.play();
     handsOn = true;
     tHands.classList.remove('busy');
@@ -299,8 +323,9 @@ addEventListener('drop', function (e) {
   if (f) E.playFile(f);
 });
 
-['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
-  addEventListener(ev, armInputs, { once: false, passive: true });
+// click and touchend are the events Safari treats as activation most reliably
+['click', 'touchend', 'pointerdown', 'keydown'].forEach(function (ev) {
+  addEventListener(ev, armInputs, { passive: true });
 });
 setTimeout(function () { tut.classList.add('gone'); }, 60000);
 setTimeout(function () { tut.remove(); }, 62000);
