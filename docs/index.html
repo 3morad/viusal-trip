@@ -1,0 +1,1204 @@
+<title>CHROMA - Gesture-driven music visualizer</title>
+<style>
+/* ============================================================
+   CHROMA - build spec
+   Theme: locked dark. Single visual world by choice; the product
+   is a dark-room visualizer, so there is no light variant.
+   Radius rule: panels 10px, interactive pills 999px, nothing else.
+   Fonts: system stacks. Artifact CSP blocks font CDNs, so a webfont
+   link would silently fall back. System display faces are the honest
+   choice here (SF Pro / Segoe UI Variable / DejaVu).
+   ============================================================ */
+
+:root{
+  --bg:      #08090C;
+  --bg-1:    #0E1015;
+  --bg-2:    #14171E;
+  --line:    #1E232D;
+  --line-2:  #2B323F;
+  --fg:      #EAEBEF;
+  --fg-2:    #99A0AD;
+  --fg-3:    #626977;
+  --accent:  #E8A33D;
+  --accent-d:#F0B75F;
+  --on-accent:#150F04;
+  --live:    #5FBFA0;
+  --dead:    #D96A6E;
+
+  --sans: system-ui, -apple-system, "Segoe UI Variable Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Code", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+
+  --frame: 1200px;
+  --r: 10px;
+  --ease: cubic-bezier(.16,1,.3,1);
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%; scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} }
+
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--fg);
+  font-family:var(--sans);
+  font-size:1.0625rem;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+
+h1,h2,h3{margin:0; text-wrap:balance; letter-spacing:-.035em; font-weight:600; line-height:1.02}
+p{margin:0}
+a{color:inherit}
+
+.frame{width:100%; max-width:var(--frame); margin-inline:auto; padding-inline:24px}
+@media (max-width:640px){ .frame{padding-inline:18px} }
+
+.mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+.eyebrow{
+  font-family:var(--mono); font-size:.6875rem; text-transform:uppercase;
+  letter-spacing:.2em; color:var(--fg-3);
+}
+.lede{color:var(--fg-2); font-size:1.0625rem; max-width:62ch}
+.h2{font-size:clamp(1.9rem,3.6vw,2.9rem)}
+.h3{font-size:1.0625rem; font-weight:600; letter-spacing:-.01em}
+
+section{position:relative}
+section[id],header[id]{scroll-margin-top:80px}
+.pad{padding-block:clamp(76px,10vw,132px)}
+.rule{height:1px; background:var(--line); border:0; margin:0}
+
+/* focus */
+:where(a,button,[tabindex]):focus-visible{
+  outline:2px solid var(--accent); outline-offset:3px; border-radius:4px;
+}
+
+/* ---------- nav ---------- */
+.nav{
+  position:sticky; top:0; z-index:50; height:64px;
+  display:flex; align-items:center;
+  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);
+}
+.nav-in{display:flex; align-items:center; justify-content:space-between; gap:24px; width:100%}
+.wordmark{font-family:var(--mono); font-size:.8125rem; letter-spacing:.34em; font-weight:600; text-decoration:none}
+.nav-links{display:flex; gap:28px; list-style:none; margin:0; padding:0}
+.nav-links a{
+  font-size:.875rem; color:var(--fg-2); text-decoration:none;
+  transition:color .2s var(--ease);
+}
+.nav-links a:hover{color:var(--fg)}
+@media (max-width:720px){ .nav-links{display:none} }
+
+/* ---------- hero ---------- */
+.hero{position:relative; min-height:100dvh; display:flex; align-items:flex-end; overflow:hidden}
+#gl{position:absolute; inset:0; width:100%; height:100%; display:block}
+.hero-scrim{
+  position:absolute; inset:0; pointer-events:none;
+  background:
+    linear-gradient(to top, var(--bg) 2%, color-mix(in srgb, var(--bg) 55%, transparent) 38%, transparent 68%),
+    linear-gradient(to right, color-mix(in srgb, var(--bg) 72%, transparent), transparent 62%);
+}
+.hero-in{position:relative; width:100%; padding-block:clamp(48px,9vh,96px) clamp(56px,10vh,104px)}
+.hero-grid{display:grid; grid-template-columns:minmax(0,8fr) minmax(0,4fr); gap:48px; align-items:end}
+@media (max-width:900px){ .hero-grid{grid-template-columns:1fr; gap:32px} }
+
+.hero h1{font-size:clamp(2.5rem,5.4vw,4.4rem); max-width:20ch}
+.hero .lede{margin-top:22px; font-size:clamp(1.0625rem,1.5vw,1.1875rem); max-width:46ch; color:#B6BCC7}
+.cta-row{display:flex; flex-wrap:wrap; gap:12px; margin-top:34px}
+
+.btn{
+  font-family:var(--sans); font-size:.9375rem; font-weight:550; letter-spacing:-.005em;
+  border-radius:999px; padding:13px 26px; border:1px solid transparent;
+  cursor:pointer; white-space:nowrap; text-decoration:none;
+  display:inline-flex; align-items:center; gap:10px;
+  transition:transform .18s var(--ease), background .2s var(--ease), border-color .2s var(--ease), color .2s var(--ease);
+}
+.btn:active{transform:translateY(1px) scale(.985)}
+.btn-primary{background:var(--accent); color:var(--on-accent)}
+.btn-primary:hover{background:var(--accent-d)}
+.btn-ghost{background:transparent; color:var(--fg); border-color:var(--line-2)}
+.btn-ghost:hover{border-color:var(--fg-3); background:var(--bg-2)}
+.btn[aria-busy="true"]{opacity:.6; pointer-events:none}
+
+/* live readout panel in hero */
+.readout{
+  border:1px solid var(--line); border-radius:var(--r); background:color-mix(in srgb, var(--bg-1) 78%, transparent);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); padding:18px 20px;
+}
+.readout-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px}
+.readout-src{font-family:var(--mono); font-size:.6875rem; letter-spacing:.16em; text-transform:uppercase; color:var(--accent)}
+.meters{display:grid; gap:9px}
+.meter{display:grid; grid-template-columns:60px 1fr 42px; align-items:center; gap:12px}
+.meter-name{font-family:var(--mono); font-size:.6875rem; color:var(--fg-3); text-transform:uppercase; letter-spacing:.1em}
+.meter-track{height:3px; background:var(--line); border-radius:999px; overflow:hidden}
+.meter-fill{height:100%; width:0%; background:var(--fg-2); border-radius:999px; transition:width .06s linear}
+.meter-val{font-family:var(--mono); font-size:.6875rem; color:var(--fg-2); text-align:right; font-variant-numeric:tabular-nums}
+.readout-foot{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  margin-top:16px; padding-top:14px; border-top:1px solid var(--line);
+  font-family:var(--mono); font-size:.75rem; color:var(--fg-2);
+}
+.chord-now{color:var(--fg); font-size:.9375rem; font-weight:600}
+</style>
+<style>
+/* ---------- the wall: two-column verdict ---------- */
+.wall{display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid var(--line); border-radius:var(--r); overflow:hidden; margin-top:44px}
+@media (max-width:820px){ .wall{grid-template-columns:1fr} }
+.wall-col{padding:32px 30px; background:var(--bg-1)}
+.wall-col + .wall-col{border-left:1px solid var(--line); background:#0B0C10}
+@media (max-width:820px){ .wall-col + .wall-col{border-left:0; border-top:1px solid var(--line)} }
+.wall-tag{
+  font-family:var(--mono); font-size:.6875rem; text-transform:uppercase; letter-spacing:.16em;
+  display:inline-block; padding:5px 11px; border-radius:999px; margin-bottom:20px;
+}
+.tag-live{color:var(--live); border:1px solid color-mix(in srgb, var(--live) 34%, transparent); background:color-mix(in srgb, var(--live) 9%, transparent)}
+.tag-dead{color:var(--dead); border:1px solid color-mix(in srgb, var(--dead) 34%, transparent); background:color-mix(in srgb, var(--dead) 9%, transparent)}
+.wall-list{list-style:none; margin:0; padding:0; display:grid; gap:16px}
+.wall-list li{display:grid; gap:4px}
+.wall-list b{font-weight:600; font-size:.9375rem; letter-spacing:-.01em}
+.wall-list span{color:var(--fg-2); font-size:.9063rem; line-height:1.55}
+.wall-list .struck b{text-decoration:line-through; text-decoration-color:color-mix(in srgb, var(--dead) 70%, transparent); text-decoration-thickness:1.5px; color:var(--fg-3)}
+
+/* ---------- signal path ---------- */
+.flowscroll{overflow-x:auto; padding-bottom:8px; margin-top:44px; -webkit-overflow-scrolling:touch}
+.flow{display:grid; grid-template-columns:repeat(4, minmax(210px,1fr)); gap:20px; min-width:900px}
+@media (max-width:760px){ .flow{min-width:840px} }
+.flow-col{display:grid; gap:12px; align-content:start}
+.flow-head{
+  font-family:var(--mono); font-size:.6875rem; text-transform:uppercase; letter-spacing:.2em;
+  color:var(--fg-3); padding-bottom:11px; border-bottom:1px solid var(--line); margin-bottom:6px;
+}
+.node{
+  border:1px solid var(--line); border-radius:var(--r); background:var(--bg-1);
+  padding:15px 16px; display:grid; gap:5px; position:relative;
+}
+.node b{font-size:.875rem; font-weight:600; letter-spacing:-.01em}
+.node span{font-family:var(--mono); font-size:.6875rem; color:var(--fg-3); line-height:1.5}
+.node-dead{border-style:dashed; border-color:color-mix(in srgb, var(--dead) 45%, transparent); background:transparent}
+.node-dead b{color:var(--fg-3); text-decoration:line-through; text-decoration-color:color-mix(in srgb, var(--dead) 60%, transparent)}
+.node-dead span{color:var(--dead)}
+.node-bus{border-color:color-mix(in srgb, var(--accent) 40%, transparent); background:color-mix(in srgb, var(--accent) 6%, transparent)}
+.node-bus b{color:var(--accent-d)}
+.node-live{border-color:color-mix(in srgb, var(--live) 32%, transparent)}
+.flow-note{margin-top:22px; font-size:.9063rem; color:var(--fg-2); max-width:62ch}
+
+/* ---------- chord to color ---------- */
+.wheelwrap{display:grid; grid-template-columns:minmax(0,420px) minmax(0,1fr); gap:clamp(32px,5vw,72px); align-items:center; margin-top:48px}
+@media (max-width:860px){ .wheelwrap{grid-template-columns:1fr; gap:36px} }
+.wheelbox{position:relative; aspect-ratio:1; width:100%; max-width:420px}
+#wheel{width:100%; height:100%; display:block; border-radius:50%}
+.wheel-copy p + p{margin-top:16px}
+.pcbar{display:grid; grid-template-columns:repeat(12,1fr); gap:3px; margin-top:26px}
+.pc{display:grid; gap:6px; justify-items:center}
+.pc-track{width:100%; height:52px; background:var(--bg-2); border-radius:3px; display:flex; align-items:flex-end; overflow:hidden}
+.pc-fill{width:100%; height:0%; border-radius:2px; transition:height .07s linear}
+.pc-lab{font-family:var(--mono); font-size:.625rem; color:var(--fg-3)}
+
+/* ---------- bento ---------- */
+.bento{display:grid; grid-template-columns:repeat(6,1fr); gap:16px; margin-top:44px}
+@media (max-width:900px){ .bento{grid-template-columns:1fr} }
+.cell{border:1px solid var(--line); border-radius:var(--r); background:var(--bg-1); padding:26px 26px 24px; display:grid; gap:10px; align-content:start}
+.cell-a{grid-column:span 4}
+.cell-b{grid-column:span 2}
+.cell-c{grid-column:span 3}
+.cell-d{grid-column:span 3}
+@media (max-width:900px){ .cell-a,.cell-b,.cell-c,.cell-d{grid-column:auto} }
+.cell p{color:var(--fg-2); font-size:.9375rem; line-height:1.6}
+.cell-figure{background:linear-gradient(160deg, #101319, #0A0B0F); position:relative; overflow:hidden}
+.bandcanvas{width:100%; height:118px; display:block; margin-top:6px; border-radius:6px}
+.stat{font-family:var(--mono); font-size:2.25rem; letter-spacing:-.04em; color:var(--accent); line-height:1; font-variant-numeric:tabular-nums}
+.stat-sub{font-family:var(--mono); font-size:.6875rem; color:var(--fg-3); text-transform:uppercase; letter-spacing:.14em}
+.codeblock{
+  font-family:var(--mono); font-size:.8125rem; line-height:1.75; color:var(--fg-2);
+  background:#0A0B0F; border:1px solid var(--line); border-radius:var(--r);
+  padding:20px 22px; overflow-x:auto; margin-top:16px; white-space:pre;
+}
+.codeblock .k{color:var(--accent-d)}
+.codeblock .c{color:var(--fg-3)}
+
+/* ---------- gesture spec ---------- */
+.gestures{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:44px}
+@media (max-width:820px){ .gestures{grid-template-columns:1fr} }
+.gcard{border:1px solid var(--line); border-radius:var(--r); background:var(--bg-1); padding:24px 24px 22px}
+.gcard h3{margin-bottom:18px}
+.gmap{display:grid; gap:0}
+.gmap-row{display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:13px 0; align-items:baseline}
+.gmap-row + .gmap-row{border-top:1px solid var(--line)}
+.gmap-in{font-size:.9063rem; font-weight:550}
+.gmap-out{font-family:var(--mono); font-size:.75rem; color:var(--fg-2); text-align:right}
+.gnote{margin-top:20px; font-size:.875rem; color:var(--fg-3); line-height:1.6}
+
+/* ---------- scenes ---------- */
+.tabs{display:flex; gap:8px; margin-top:40px; flex-wrap:wrap}
+.tab{
+  font-family:var(--mono); font-size:.75rem; letter-spacing:.1em; text-transform:uppercase;
+  padding:9px 18px; border-radius:999px; border:1px solid var(--line-2);
+  background:transparent; color:var(--fg-2); cursor:pointer;
+  transition:all .2s var(--ease);
+}
+.tab:hover{color:var(--fg); border-color:var(--fg-3)}
+.tab[aria-selected="true"]{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.stage{
+  margin-top:20px; border:1px solid var(--line); border-radius:var(--r);
+  overflow:hidden; position:relative; background:#06070A;
+}
+#scene{width:100%; height:clamp(300px,46vh,520px); display:block}
+.stage-cap{
+  display:flex; flex-wrap:wrap; gap:20px; justify-content:space-between;
+  padding:18px 22px; border-top:1px solid var(--line); background:var(--bg-1);
+}
+.stage-cap p{font-size:.9063rem; color:var(--fg-2); max-width:64ch}
+.stage-cap .mono{font-size:.6875rem; color:var(--fg-3); text-transform:uppercase; letter-spacing:.14em; white-space:nowrap}
+
+/* ---------- safety band ---------- */
+.safety{background:var(--bg-1); border-top:1px solid var(--line); border-bottom:1px solid var(--line)}
+.safety-in{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); gap:clamp(28px,5vw,64px); align-items:start}
+@media (max-width:820px){ .safety-in{grid-template-columns:1fr; gap:24px} }
+.safety h2{font-size:clamp(1.6rem,2.6vw,2.1rem)}
+.safety p{color:var(--fg-2); font-size:.9688rem}
+.safety p + p{margin-top:14px}
+
+/* ---------- build order ---------- */
+.phases{margin-top:44px; border-left:1px solid var(--line); display:grid; gap:0}
+.phase{display:grid; grid-template-columns:180px minmax(0,1fr); gap:clamp(20px,4vw,56px); padding:26px 0 26px 28px; position:relative}
+.phase + .phase{border-top:1px solid var(--line)}
+.phase::before{
+  content:""; position:absolute; left:-3.5px; top:34px;
+  width:6px; height:6px; border-radius:50%; background:var(--line-2);
+}
+.phase[data-first]::before{background:var(--accent)}
+@media (max-width:760px){ .phase{grid-template-columns:1fr; gap:10px} }
+.phase h3{font-size:1.25rem; letter-spacing:-.025em}
+.phase-body p{color:var(--fg-2); font-size:.9375rem}
+.phase-out{font-family:var(--mono); font-size:.75rem; color:var(--fg-3); margin-top:10px}
+
+/* ---------- risks ---------- */
+.risks{display:grid; grid-template-columns:repeat(3,1fr); gap:32px; margin-top:44px}
+@media (max-width:860px){ .risks{grid-template-columns:1fr; gap:26px} }
+.risk h3{margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--line)}
+.risk p{color:var(--fg-2); font-size:.9063rem}
+.risk p + p{margin-top:12px}
+
+/* ---------- footer ---------- */
+.foot{padding-block:44px; border-top:1px solid var(--line)}
+.foot-in{display:flex; flex-wrap:wrap; gap:18px; justify-content:space-between; align-items:center}
+.foot span{font-family:var(--mono); font-size:.75rem; color:var(--fg-3)}
+
+/* ---------- hero load-in ---------- */
+@keyframes riseIn{ from{opacity:0; transform:translateY(20px)} to{opacity:1; transform:none} }
+.hero h1, .hero .lede, .hero .cta-row, .hero .readout{
+  animation:riseIn .85s var(--ease) both;
+}
+.hero h1{animation-delay:.10s}
+.hero .lede{animation-delay:.22s}
+.hero .cta-row{animation-delay:.32s}
+.hero .readout{animation-delay:.44s}
+@media (prefers-reduced-motion: reduce){
+  .hero h1,.hero .lede,.hero .cta-row,.hero .readout{animation:none}
+}
+
+/* ---------- reveal ---------- */
+.rev{opacity:0; transform:translateY(22px)}
+.rev.in{opacity:1; transform:none; transition:opacity .7s var(--ease), transform .7s var(--ease)}
+
+@supports (animation-timeline: view()){
+  .rev{
+    animation:riseIn .9s var(--ease) both;
+    animation-timeline:view();
+    animation-range:entry 6% entry 62%;
+    transition:none;
+  }
+}
+@media (prefers-reduced-motion: reduce){
+  .rev{opacity:1; transform:none; transition:none; animation:none}
+  .meter-fill,.pc-fill{transition:none}
+}
+</style>
+
+<nav class="nav">
+  <div class="frame nav-in">
+    <a class="wordmark" href="#top">CHROMA</a>
+    <ul class="nav-links">
+      <li><a href="#wall">The wall</a></li>
+      <li><a href="#path">Signal path</a></li>
+      <li><a href="#scenes">Scenes</a></li>
+      <li><a href="#build">Build order</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <canvas id="gl" aria-hidden="true"></canvas>
+  <div class="hero-scrim" aria-hidden="true"></div>
+  <div class="frame hero-in">
+    <div class="hero-grid">
+      <div>
+        <h1>The trip Spotify cannot give you.</h1>
+        <p class="lede">Spotify's audio is sealed behind DRM. CHROMA listens to the room instead, turning chords, drums and your hands into light.</p>
+        <div class="cta-row">
+          <button class="btn btn-primary" id="micBtn" type="button">Use my mic</button>
+          <a class="btn btn-ghost" href="#wall">Read the spec</a>
+        </div>
+      </div>
+
+      <div class="readout" id="readout">
+        <div class="readout-head">
+          <span class="readout-src" id="srcLabel">Synthetic signal</span>
+          <span class="mono" style="font-size:.6875rem; color:var(--fg-3)" id="bpmLabel">112 BPM</span>
+        </div>
+        <div class="meters">
+          <div class="meter"><span class="meter-name">Kick</span><div class="meter-track"><div class="meter-fill" id="mKick"></div></div><span class="meter-val" id="vKick">0.00</span></div>
+          <div class="meter"><span class="meter-name">Bass</span><div class="meter-track"><div class="meter-fill" id="mBass"></div></div><span class="meter-val" id="vBass">0.00</span></div>
+          <div class="meter"><span class="meter-name">Body</span><div class="meter-track"><div class="meter-fill" id="mMid"></div></div><span class="meter-val" id="vMid">0.00</span></div>
+          <div class="meter"><span class="meter-name">Air</span><div class="meter-track"><div class="meter-fill" id="mAir"></div></div><span class="meter-val" id="vAir">0.00</span></div>
+        </div>
+        <div class="readout-foot">
+          <span>Detected chord</span>
+          <span class="chord-now" id="chordNow">Am</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="pad" id="wall">
+  <div class="frame">
+    <p class="eyebrow rev">Why the architecture looks like this</p>
+    <h2 class="h2 rev" style="margin-top:18px; max-width:19ch">Spotify tells you what is playing, never what it sounds like.</h2>
+    <p class="lede rev" style="margin-top:20px">Two separate doors closed in the same year, and between them they rule out every direct approach. Both are load bearing, so the design starts here rather than ending here.</p>
+
+    <div class="wall rev">
+      <div class="wall-col">
+        <span class="wall-tag tag-live">Still available</span>
+        <ul class="wall-list">
+          <li><b>Currently playing track</b><span>Title, artist, album, duration and progress in milliseconds, polled from the player endpoint.</span></li>
+          <li><b>Album artwork</b><span>Full resolution image URLs, which can be sampled for a per track palette seed.</span></li>
+          <li><b>Library and playlists</b><span>Saved tracks, playlists and search, enough to build a real browsing surface.</span></li>
+          <li><b>Playback control</b><span>Play, pause, skip and seek against an active device, with the right scope granted.</span></li>
+        </ul>
+      </div>
+      <div class="wall-col">
+        <span class="wall-tag tag-dead">Closed</span>
+        <ul class="wall-list">
+          <li class="struck"><b>Audio Analysis</b><span>Beat grid, bars, sections and per segment pitch and timbre vectors. Deprecated November 2024. New clients receive 403 and there is no replacement.</span></li>
+          <li class="struck"><b>Audio Features</b><span>Tempo, key, energy and danceability. Closed in the same deprecation, with quota extensions now gated behind 250k monthly users.</span></li>
+          <li class="struck"><b>Playback audio samples</b><span>The Web Playback SDK renders inside an iframe under Encrypted Media Extensions. An AnalyserNode cannot be attached to it, by design.</span></li>
+          <li class="struck"><b>Thirty second previews</b><span>Preview URLs were pulled from new integrations through 2025, closing the last sanctioned route to raw audio.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="pad" id="path">
+  <div class="frame">
+    <h2 class="h2 rev" style="max-width:20ch">Split the roles. Spotify names the track, the room supplies the sound.</h2>
+    <p class="lede rev" style="margin-top:20px">Everything downstream of capture is identical whichever source is feeding it, so the file input is not a fallback bolted on later. It is the same pipe, and it is how the whole thing gets developed offline.</p>
+
+    <div class="flowscroll rev">
+      <div class="flow">
+        <div class="flow-col">
+          <div class="flow-head">Source</div>
+          <div class="node node-live"><b>Spotify Web API</b><span>PKCE auth, no backend<br>poll every 3s</span></div>
+          <div class="node node-dead"><b>Web Playback SDK</b><span>EME iframe, no samples</span></div>
+          <div class="node node-live"><b>Loopback or mic</b><span>getUserMedia<br>BlackHole, VB-Cable</span></div>
+          <div class="node node-live"><b>Local audio file</b><span>decodeAudioData</span></div>
+          <div class="node node-live"><b>Webcam</b><span>640x480 at 30fps</span></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-head">Extract</div>
+          <div class="node"><b>Track metadata</b><span>title, art, progress<br>k-means palette seed</span></div>
+          <div class="node" style="min-height:64px; border-style:dashed; border-color:var(--line); background:transparent"><span style="color:var(--fg-3)">nothing crosses<br>the DRM boundary</span></div>
+          <div class="node"><b>DSP chain</b><span>FFT 4096 at 48kHz<br>bands, chroma, flux, HPSS</span></div>
+          <div class="node"><b>HandLandmarker</b><span>21 landmarks, 2 hands<br>One Euro smoothing</span></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-head">Shared state</div>
+          <div class="node node-bus"><b>Palette seed</b><span>vec3[5] per track</span></div>
+          <div class="node node-bus"><b>Feature bus</b><span>Float32Array, 60Hz<br>the one seam that matters</span></div>
+          <div class="node node-bus"><b>Gesture state</b><span>continuous + pose events</span></div>
+        </div>
+        <div class="flow-col">
+          <div class="flow-head">Render</div>
+          <div class="node"><b>Scene graph</b><span>3 swappable GLSL scenes<br>one shared uniform block</span></div>
+          <div class="node"><b>Post chain</b><span>bloom, aberration, grain</span></div>
+          <div class="node node-live"><b>Flash limiter</b><span>hard clamp before output</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="flow-note rev">One consequence worth planning around. Speaker to microphone adds roughly 25ms of acoustic delay, and an 85ms analysis window sits on top of that. Reacting to an onset always lands late, so beat driven motion is scheduled against predicted phase rather than triggered on detection.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="pad">
+  <div class="frame">
+    <h2 class="h2 rev" style="max-width:18ch">Chords become hue by walking the circle of fifths.</h2>
+
+    <div class="wheelwrap">
+      <div class="wheelbox rev"><canvas id="wheel" aria-label="Circle of fifths mapped onto the hue wheel, with the currently detected chord highlighted"></canvas></div>
+      <div class="wheel-copy rev">
+        <p class="lede">A twelve bin chroma vector falls out of the FFT almost for free. Fold every bin between C3 and C7 down to its pitch class, sum the linear magnitudes, and you have the harmonic content of the moment without knowing anything about the track.</p>
+        <p class="lede">Matching that vector against twenty four triad templates by cosine similarity gives the chord. Ordering the twelve pitch classes by fifths rather than by semitone means harmonically close chords land close in hue, so a ii V I drifts through neighbouring colour instead of strobing across the wheel.</p>
+        <p class="lede">Chord changes commit only after four consecutive frames agree, roughly 340ms. Passing tones and grace notes never reach the renderer.</p>
+        <div class="pcbar" id="pcbar" aria-hidden="true"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="pad">
+  <div class="frame">
+    <h2 class="h2 rev" style="max-width:16ch">What the pipeline actually hears.</h2>
+
+    <div class="bento">
+      <div class="cell cell-a cell-figure rev">
+        <h3 class="h3">Six bands, envelope followed</h3>
+        <p>Raw bin energy is jittery and unusable. Each band runs through a follower with a 5ms attack and a 180ms release, then normalises against a rolling percentile so a quiet ambient record and a loud master both drive the full range.</p>
+        <canvas class="bandcanvas" id="bandcv" aria-hidden="true"></canvas>
+      </div>
+
+      <div class="cell cell-b rev">
+        <span class="stat-sub">Analysis window</span>
+        <div class="stat">85<span style="font-size:1.125rem; letter-spacing:0">ms</span></div>
+        <p>4096 point FFT at 48kHz gives 2048 bins at 11.7Hz each. Fine enough for onsets and bands, too coarse for bass pitch, which is why chroma starts at C3.</p>
+      </div>
+
+      <div class="cell cell-c rev">
+        <h3 class="h3">Onset, tempo and phase</h3>
+        <p>Half wave rectified spectral flux against a rolling median threshold gives onsets. Autocorrelating the flux over a six second window inside a 60 to 180 BPM lag range gives tempo, and aligning to the last strong onset gives a continuous phase value.</p>
+        <p style="color:var(--fg-3); font-size:.875rem">Phase is what the shaders want. A boolean beat flag arrives too late to be useful.</p>
+      </div>
+
+      <div class="cell cell-d rev">
+        <h3 class="h3">Harmonic and percussive split</h3>
+        <p>Median filtering the spectrogram along time isolates sustained content, along frequency isolates transients. Seventeen frames of history is enough, and it runs comfortably in realtime.</p>
+        <p style="color:var(--fg-3); font-size:.875rem">This is the honest version of instrument separation. True stem splitting needs a network that will not run in a browser at 60fps, so melody and drums as two layers is where the line sits.</p>
+      </div>
+    </div>
+
+    <pre class="codeblock rev"><span class="c">// The one contract between audio and render. Everything else is replaceable.</span>
+<span class="k">interface</span> FeatureBus {
+  bands:      Float32Array;  <span class="c">// 6, normalised 0..1, envelope followed</span>
+  chroma:     Float32Array;  <span class="c">// 12, pitch classes from C, unit max</span>
+  chord:      { root: number; quality: <span class="k">'maj'</span>|<span class="k">'min'</span>|<span class="k">null</span>; confidence: number };
+  key:        { root: number; mode: <span class="k">'maj'</span>|<span class="k">'min'</span> };  <span class="c">// 30s rolling estimate</span>
+  onset:      number;        <span class="c">// flux above threshold, decays over 120ms</span>
+  bpm:        number;
+  beatPhase:  number;        <span class="c">// 0..1, continuous, predicted not reactive</span>
+  harmonic:   number;
+  percussive: number;
+  rms:        number;
+  source:     <span class="k">'mic'</span>|<span class="k">'file'</span>|<span class="k">'synthetic'</span>;
+}</pre>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="pad" id="hands">
+  <div class="frame">
+    <h2 class="h2 rev" style="max-width:20ch">Two layers of hand control, live at the same time.</h2>
+    <p class="lede rev" style="margin-top:20px">Every continuous value is normalised against hand size before it leaves the tracker, so leaning toward the camera does not silently change the reading.</p>
+
+    <div class="gestures">
+      <div class="gcard rev">
+        <h3 class="h3">Continuous, always live</h3>
+        <div class="gmap">
+          <div class="gmap-row"><span class="gmap-in">Pinch, thumb to index</span><span class="gmap-out">zoom / fractal depth</span></div>
+          <div class="gmap-row"><span class="gmap-in">Hand height in frame</span><span class="gmap-out">hue offset</span></div>
+          <div class="gmap-row"><span class="gmap-in">Distance between wrists</span><span class="gmap-out">kaleidoscope segments</span></div>
+          <div class="gmap-row"><span class="gmap-in">Wrist roll angle</span><span class="gmap-out">warp field rotation</span></div>
+          <div class="gmap-row"><span class="gmap-in">Finger extension mean</span><span class="gmap-out">bloom and feedback gain</span></div>
+        </div>
+        <p class="gnote">Smoothed with a One Euro filter rather than a lerp. Low lag when the hand moves fast, no visible jitter when it holds still.</p>
+      </div>
+
+      <div class="gcard rev">
+        <h3 class="h3">Poses, debounced to events</h3>
+        <div class="gmap">
+          <div class="gmap-row"><span class="gmap-in">Closed fist</span><span class="gmap-out">freeze feedback buffer</span></div>
+          <div class="gmap-row"><span class="gmap-in">Open palm, held</span><span class="gmap-out">reset scene to neutral</span></div>
+          <div class="gmap-row"><span class="gmap-in">Two fingers extended</span><span class="gmap-out">cycle scene</span></div>
+          <div class="gmap-row"><span class="gmap-in">Both palms pushing out</span><span class="gmap-out">crossfade to next scene</span></div>
+          <div class="gmap-row"><span class="gmap-in">Pinch held past 600ms</span><span class="gmap-out">latch current parameter</span></div>
+        </div>
+        <p class="gnote">A pose fires only after five consecutive agreeing frames and a 300ms cooldown. Transitional shapes between two deliberate gestures never trigger anything.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="pad" id="scenes">
+  <div class="frame">
+    <h2 class="h2 rev" style="max-width:17ch">Three scenes, one bus, one renderer.</h2>
+    <p class="lede rev" style="margin-top:20px">Each scene is a fragment shader reading the same uniform block. Adding a fourth means writing one file, not touching the pipeline.</p>
+
+    <div class="tabs rev" role="tablist" aria-label="Scene selector">
+      <button class="tab" role="tab" aria-selected="true" data-scene="0">Feedback trails</button>
+      <button class="tab" role="tab" aria-selected="false" data-scene="1">Raymarched fractal</button>
+      <button class="tab" role="tab" aria-selected="false" data-scene="2">Particle field</button>
+    </div>
+
+    <div class="stage rev">
+      <canvas id="scene" aria-label="Live preview of the selected scene, driven by the same feature bus as the hero"></canvas>
+      <div class="stage-cap">
+        <p id="sceneCopy">A ping pong framebuffer warped, zoomed and rotated every frame so colour smears into itself. Cheapest of the three and the one that reads most immediately as a trip.</p>
+        <span class="mono" id="sceneCost">GPU cost: low</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="safety pad">
+  <div class="frame safety-in">
+    <h2 class="rev">A bass reactive full screen flash is a seizure trigger, so the limiter is not optional.</h2>
+    <div class="rev">
+      <p>The frame's mean luminance is read back from the smallest mip level every frame. If the delta between consecutive frames would exceed the safe threshold more than three times per second, the final pass clamps it. The scene keeps its motion and loses only the strobe.</p>
+      <p>Alongside that: an entry gate that states the risk plainly before anything goes fullscreen, a reduced intensity mode wired to the system preference, and a global ceiling on saturated red flashes, which are the worst offenders in the danger band.</p>
+      <p style="color:var(--fg-3)">This page runs the same limiter on its own canvases.</p>
+    </div>
+  </div>
+</section>
+
+<section class="pad" id="build">
+  <div class="frame">
+    <p class="eyebrow rev">Build order</p>
+    <h2 class="h2 rev" style="margin-top:18px; max-width:19ch">Each step ends with something you can actually look at.</h2>
+
+    <div class="phases">
+      <div class="phase rev" data-first>
+        <h3>Capture</h3>
+        <div class="phase-body">
+          <p>Vite and TypeScript, no framework. Both audio sources landing in one graph, with the three getUserMedia processing flags switched off, because echo cancellation and auto gain will quietly destroy the spectrum before you ever see it.</p>
+          <p class="phase-out">Ends with: a spectrum drawn to a canvas from either input.</p>
+        </div>
+      </div>
+      <div class="phase rev">
+        <h3>Extract</h3>
+        <div class="phase-body">
+          <p>The full DSP chain and the feature bus behind it. Bands, chroma, chord matching, flux, tempo, phase and the harmonic split, plus a debug overlay showing every value at once so the tuning work has something to argue with.</p>
+          <p class="phase-out">Ends with: chord names appearing over a track you know.</p>
+        </div>
+      </div>
+      <div class="phase rev">
+        <h3>Render</h3>
+        <div class="phase-body">
+          <p>WebGL2, the ping pong feedback buffer, the shared uniform block, the post chain and the flash limiter. One scene only. This is where the project either feels good or does not, so it gets the tuning time.</p>
+          <p class="phase-out">Ends with: the first scene reacting properly to real music.</p>
+        </div>
+      </div>
+      <div class="phase rev">
+        <h3>Reach</h3>
+        <div class="phase-body">
+          <p>MediaPipe HandLandmarker with self hosted WASM, the One Euro filter, the continuous mappings and the pose recogniser. Tracking runs on its own 30fps budget so it never competes with the render loop for frames.</p>
+          <p class="phase-out">Ends with: hands driving the scene with no visible lag.</p>
+        </div>
+      </div>
+      <div class="phase rev">
+        <h3>Connect</h3>
+        <div class="phase-body">
+          <p>Spotify PKCE, now playing polling with locally extrapolated progress, artwork palette extraction, and the remaining two scenes. Worth doing last precisely because it is the part most likely to change under you.</p>
+          <p class="phase-out">Ends with: track name, art and palette live on screen.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="pad">
+  <div class="frame">
+    <h2 class="h2 rev" style="max-width:16ch">What is most likely to go wrong.</h2>
+    <div class="risks">
+      <div class="risk rev">
+        <h3 class="h3">Loopback setup friction</h3>
+        <p>A room mic works but picks up conversation, and a clean signal needs a virtual audio device the user has to install and route themselves.</p>
+        <p>Budget real time for a per platform setup guide with a live input meter, and make the file input genuinely good so nobody is forced through it to try the thing.</p>
+      </div>
+      <div class="risk rev">
+        <h3 class="h3">Two GPU consumers, one GPU</h3>
+        <p>Hand tracking and a raymarched fractal both want the graphics card. On integrated hardware they will fight and the frame rate collapses.</p>
+        <p>Run the tracker in a worker against an OffscreenCanvas at a fixed 30fps, and drop the render resolution before dropping the frame rate.</p>
+      </div>
+      <div class="risk rev">
+        <h3 class="h3">Spotify moving again</h3>
+        <p>An API that removed four endpoint families in eighteen months can remove more, and development mode caps you at 25 manually added users.</p>
+        <p>Keep everything Spotify touches behind one adapter with a null implementation. If the account is not connected, the visualizer still runs, it just stops knowing the track name.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="frame foot-in">
+    <span>CHROMA</span>
+    <span>Audio reactive rendering, hand tracked control</span>
+  </div>
+</footer>
+
+<script>
+(() => {
+"use strict";
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const NOTE = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+
+/* ---------------------------------------------------------------
+   Feature bus. Exactly the contract printed in the spec above.
+   Synthetic by default, real analysis once the mic is granted.
+   --------------------------------------------------------------- */
+const F = {
+  bands: new Float32Array(6),
+  chroma: new Float32Array(12),
+  chord: { root: 9, quality: 'min', confidence: 0 },
+  onset: 0, bpm: 112, beatPhase: 0,
+  harmonic: 0, percussive: 0, rms: 0,
+  source: 'synthetic'
+};
+
+/* --- synthetic signal: a four bar loop so the page has something to show --- */
+const PROG = [ [9,'min'], [5,'maj'], [0,'maj'], [7,'maj'] ];
+const TRIADS = { maj:[0,4,7], min:[0,3,7] };
+function synth(t){
+  const beat = t * F.bpm / 60;
+  F.beatPhase = beat % 1;
+  const bar = ((Math.floor(beat / 4) % PROG.length) + PROG.length) % PROG.length;
+  const [root, qual] = PROG[bar];
+
+  const kick = Math.pow(1 - F.beatPhase, 6);
+  const off  = Math.pow(1 - ((beat + 0.5) % 1), 9);
+  const hat  = Math.pow(1 - ((beat * 2) % 1), 14);
+  const swell = 0.5 + 0.5 * Math.sin(t * 0.31);
+
+  F.bands[0] = clamp(kick * 0.95, 0, 1);
+  F.bands[1] = clamp(kick * 0.55 + 0.28 + 0.14 * Math.sin(t * 1.7), 0, 1);
+  F.bands[2] = clamp(0.24 + 0.2 * swell + off * 0.35, 0, 1);
+  F.bands[3] = clamp(0.3 + 0.26 * Math.sin(t * 0.83 + 1.2) + off * 0.25, 0, 1);
+  F.bands[4] = clamp(0.2 + 0.24 * swell + hat * 0.4, 0, 1);
+  F.bands[5] = clamp(0.12 + hat * 0.7 + 0.1 * Math.sin(t * 2.3), 0, 1);
+
+  F.chroma.fill(0);
+  for (const iv of TRIADS[qual]) F.chroma[(root + iv) % 12] = 1;
+  F.chroma[(root + 10) % 12] = 0.35 * swell;
+  for (let i = 0; i < 12; i++) F.chroma[i] = clamp(F.chroma[i] * (0.72 + 0.28 * swell) + 0.05, 0, 1);
+
+  F.chord.root = root; F.chord.quality = qual; F.chord.confidence = 0.9;
+  F.onset = Math.max(kick, off, hat * 0.6);
+  F.percussive = Math.max(kick, hat); F.harmonic = 0.4 + 0.3 * swell;
+  F.rms = 0.35 + 0.2 * swell;
+}
+
+/* --- real analysis --- */
+let analyser = null, freq = null, sr = 48000, prevMag = null;
+const BAND_HZ = [[20,60],[60,150],[150,400],[400,1200],[1200,3500],[3500,12000]];
+const env = new Float32Array(6);
+const peak = new Float32Array(6).fill(0.02);
+let chordVotes = [], stableChord = { root: 9, quality: 'min' };
+
+async function enableMic(btn){
+  btn.setAttribute('aria-busy','true');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    sr = ctx.sampleRate;
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 4096;
+    analyser.smoothingTimeConstant = 0.55;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    freq = new Float32Array(analyser.frequencyBinCount);
+    prevMag = new Float32Array(analyser.frequencyBinCount);
+    F.source = 'mic';
+    document.getElementById('srcLabel').textContent = 'Live microphone';
+    btn.textContent = 'Listening';
+    btn.disabled = true;
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-ghost');
+  } catch (err) {
+    document.getElementById('srcLabel').textContent = 'Mic unavailable';
+    btn.textContent = 'Use my mic';
+  }
+  btn.removeAttribute('aria-busy');
+}
+
+function analyse(dt){
+  analyser.getFloatFrequencyData(freq);
+  const n = freq.length, hzPerBin = sr / 2 / n;
+  const mag = new Float32Array(n);
+  for (let i = 0; i < n; i++) mag[i] = Math.pow(10, freq[i] / 20);
+
+  for (let b = 0; b < 6; b++){
+    const lo = Math.max(1, Math.floor(BAND_HZ[b][0] / hzPerBin));
+    const hi = Math.min(n - 1, Math.ceil(BAND_HZ[b][1] / hzPerBin));
+    let s = 0; for (let i = lo; i <= hi; i++) s += mag[i];
+    const raw = s / Math.max(1, hi - lo + 1);
+    peak[b] = Math.max(raw, peak[b] * 0.9995);
+    const norm = clamp(raw / (peak[b] + 1e-9), 0, 1);
+    // 5ms attack, 180ms release
+    const k = norm > env[b] ? 1 - Math.exp(-dt / 0.005) : 1 - Math.exp(-dt / 0.18);
+    env[b] += (norm - env[b]) * k;
+    F.bands[b] = env[b];
+  }
+
+  // chroma over C3..C7 only; below that the 4096 window cannot resolve pitch
+  const ch = new Float32Array(12);
+  const loBin = Math.floor(130.8 / hzPerBin), hiBin = Math.min(n - 1, Math.ceil(2093 / hzPerBin));
+  for (let i = loBin; i <= hiBin; i++){
+    const f = i * hzPerBin;
+    const pc = ((Math.round(12 * Math.log2(f / 440)) % 12) + 21) % 12;
+    ch[pc] += mag[i];
+  }
+  let mx = 0; for (let i = 0; i < 12; i++) mx = Math.max(mx, ch[i]);
+  for (let i = 0; i < 12; i++) F.chroma[i] = mx > 0 ? ch[i] / mx : 0;
+
+  // spectral flux for onset
+  let flux = 0;
+  for (let i = 0; i < n; i++){ const d = mag[i] - prevMag[i]; if (d > 0) flux += d; prevMag[i] = mag[i]; }
+  F.onset = clamp(flux / (mx * 40 + 1e-6), 0, 1);
+  F.percussive = F.bands[0] * 0.6 + F.bands[5] * 0.4;
+  F.harmonic = F.bands[2] * 0.5 + F.bands[3] * 0.5;
+  F.rms = (F.bands[1] + F.bands[3]) * 0.5;
+  F.beatPhase = (F.beatPhase + dt * F.bpm / 60) % 1;
+
+  // 24 triad templates, cosine similarity, then four frames of agreement
+  let best = -1, bestRoot = 0, bestQ = 'maj';
+  for (const q of ['maj','min']){
+    for (let r = 0; r < 12; r++){
+      let dot = 0, tn = 0;
+      for (const iv of TRIADS[q]){ dot += F.chroma[(r + iv) % 12]; tn += 1; }
+      let cn = 0; for (let i = 0; i < 12; i++) cn += F.chroma[i] * F.chroma[i];
+      const sim = dot / (Math.sqrt(tn) * Math.sqrt(cn) + 1e-9);
+      if (sim > best){ best = sim; bestRoot = r; bestQ = q; }
+    }
+  }
+  chordVotes.push(bestRoot * 2 + (bestQ === 'min' ? 1 : 0));
+  if (chordVotes.length > 4) chordVotes.shift();
+  if (chordVotes.length === 4 && chordVotes.every(v => v === chordVotes[0])){
+    stableChord = { root: bestRoot, quality: bestQ };
+  }
+  F.chord.root = stableChord.root; F.chord.quality = stableChord.quality; F.chord.confidence = best;
+}
+
+/* --- flash limiter: caps large luminance swings at 3 per second --- */
+const flash = { prev: 0, hits: [] };
+function limitFlash(v, now){
+  const d = Math.abs(v - flash.prev);
+  if (d > 0.22){
+    flash.hits.push(now);
+    while (flash.hits.length && now - flash.hits[0] > 1000) flash.hits.shift();
+    if (flash.hits.length > 3) v = flash.prev + Math.sign(v - flash.prev) * 0.08;
+  }
+  flash.prev = v;
+  return v;
+}
+
+/* --- circle of fifths gives the hue --- */
+const hueOf = pc => (((pc * 7) % 12) / 12);
+
+/* ---------------------------------------------------------------
+   WebGL2. Hero runs one shader. The scene stage runs the real
+   ping pong architecture described in the spec: a sim pass that
+   reads the previous frame, then a present pass.
+   --------------------------------------------------------------- */
+const VERT = `#version 300 es
+void main(){ vec2 p = vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position = vec4(p*2.0-1.0,0.0,1.0); }`;
+
+const COMMON = `
+precision highp float;
+uniform vec2 uRes; uniform float uT,uBass,uMid,uAir,uPhase,uHue,uBright;
+float h21(vec2 p){ return fract(sin(dot(p,vec2(41.3,289.1)))*43758.5453); }
+float nz(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+  return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
+float fbm(vec2 p){ float s=0.0,a=0.5; for(int i=0;i<5;i++){ s+=a*nz(p); p*=2.03; a*=0.5; } return s; }
+vec3 pal(float t){ return 0.5+0.5*cos(6.28318*(t+vec3(0.0,0.33,0.67))); }
+vec2 toUV(vec2 p){ return vec2(p.x*uRes.y/uRes.x, p.y)+0.5; }
+`;
+
+const SIM_FS = `#version 300 es
+${COMMON}
+uniform sampler2D uPrev; uniform int uScene;
+out vec4 O;
+
+vec2 curl(vec2 p){
+  float e = 0.03, s = 1.4, tt = uT*0.04;
+  float a = fbm(p*s+tt+vec2(0.0,e)), b = fbm(p*s+tt-vec2(0.0,e));
+  float c = fbm(p*s+tt+vec2(e,0.0)), d = fbm(p*s+tt-vec2(e,0.0));
+  return vec2(a-b, -(c-d))/(2.0*e);
+}
+vec3 src0(vec2 p){
+  float r = length(p), a = atan(p.y,p.x);
+  float spokes = pow(abs(sin(a*5.0 + uT*0.25)), 26.0);
+  float ring = exp(-pow((r - fract(uPhase)*0.95)*20.0, 2.0));
+  float e = spokes*0.30*(0.25+uMid) + ring*(0.18+uBass*0.75);
+  return pal(uHue + r*0.35 + uT*0.02)*e;
+}
+vec3 srcHero(vec2 p){
+  float t = uT*0.045;
+  vec2 q = vec2(fbm(p*1.10+t), fbm(p*1.10+vec2(4.1,2.3)-t));
+  vec2 w = vec2(fbm(p*1.70 + q*(1.4+uBass*1.8) + t), fbm(p*1.70 + q*1.6 + vec2(7.7,1.9) - t));
+  float f = fbm(p*1.35 + w*2.1);
+  float contour = pow(0.5+0.5*sin(f*26.0 - uT*0.55), 6.0);
+  float r = length(p), a = atan(p.y, p.x);
+  float spokes = pow(abs(sin(a*3.0 + uT*0.11 + f*2.2)), 12.0)*exp(-r*0.85);
+  float ring = exp(-pow((r - fract(uPhase)*1.3)*5.0, 2.0))*(0.05 + uBass*0.28);
+  return pal(uHue + f*0.40 + r*0.12)*(contour*0.155*(0.5+uMid) + spokes*0.095*(0.3+uAir) + ring);
+}
+vec3 src2(vec2 p){
+  vec3 c = vec3(0.0);
+  for(int i=0;i<9;i++){
+    float fi = float(i);
+    vec2 o = vec2(sin(uT*0.21+fi*2.13)*0.78, cos(uT*0.17+fi*1.71)*0.48);
+    float d = length(p-o);
+    c += pal(uHue + fi*0.06)*exp(-d*d*1100.0)*(0.55+uAir*1.4);
+  }
+  return c;
+}
+float mapSDF(vec3 p){
+  float a = uT*0.055;
+  p.xz = mat2(cos(a),-sin(a),sin(a),cos(a))*p.xz;
+  float scale = 1.0;
+  for(int i=0;i<7;i++){
+    p = -1.0 + 2.0*fract(0.5*p + 0.5);
+    float r2 = dot(p,p);
+    float k = (1.12 + uBass*0.26)/max(r2, 0.06);
+    p *= k; scale *= k;
+  }
+  return 0.25*abs(p.y)/scale;
+}
+vec3 march(vec2 uvp){
+  vec3 ro = vec3(0.62 + 0.18*sin(uT*0.043), 0.44 + 0.12*cos(uT*0.037), -1.15 - uT*0.045);
+  vec3 rd = normalize(vec3(uvp*1.55, 1.0));
+  float t = 0.02, g = 0.0;
+  for(int i=0;i<70;i++){
+    float d = mapSDF(ro + rd*t);
+    g += 0.011/(0.042 + abs(d));
+    if(d < 0.0008 || t > 4.2) break;
+    t += clamp(d*0.62, 0.0022, 0.055);
+  }
+  return pal(uHue + t*0.10 + g*0.016)*g*g*(0.0044 + uBass*0.0052);
+}
+void main(){
+  vec2 uv = gl_FragCoord.xy/uRes;
+  vec2 p = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;
+  vec3 col;
+  if(uScene == 1){
+    col = march(p);
+  } else if(uScene == 0){
+    float sc = 1.0 - 0.011 - uBass*0.012;
+    float an = 0.0035 + uMid*0.009;
+    vec2 q = mat2(cos(an),-sin(an),sin(an),cos(an)) * (p*sc);
+    col = texture(uPrev, toUV(q)).rgb*0.955 + src0(p);
+  } else if(uScene == 2){
+    vec2 q = p - curl(p)*0.0045*(1.0 + uBass*1.6);
+    col = texture(uPrev, toUV(q)).rgb*0.962 + src2(p);
+  } else {
+    float sc = 1.0 - 0.0055 - uBass*0.006;
+    float an = 0.0016 + uMid*0.0035;
+    vec2 q = mat2(cos(an),-sin(an),sin(an),cos(an)) * (p*sc);
+    col = texture(uPrev, toUV(q)).rgb*0.955 + srcHero(p);
+  }
+  O = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`;
+
+const PRESENT_FS = `#version 300 es
+${COMMON}
+uniform sampler2D uSrc;
+out vec4 O;
+void main(){
+  vec2 uv = gl_FragCoord.xy/uRes;
+  vec2 p = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;
+  vec3 c = texture(uSrc, uv).rgb;
+  c *= 0.55 + uBright*0.62;
+  c *= 1.0 - 0.52*pow(clamp(length(p)*0.62,0.0,1.0), 2.0);
+  c += (h21(gl_FragCoord.xy + uT)-0.5)*0.022;
+  O = vec4(max(c,0.0), 1.0);
+}`;
+
+function compile(gl, src, type){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){ console.warn(gl.getShaderInfoLog(s)); return null; }
+  return s;
+}
+function program(gl, fs){
+  const v = compile(gl, VERT, gl.VERTEX_SHADER), f = compile(gl, fs, gl.FRAGMENT_SHADER);
+  if(!v || !f) return null;
+  const p = gl.createProgram();
+  gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS)){ console.warn(gl.getProgramInfoLog(p)); return null; }
+  return p;
+}
+function uniforms(gl, p){
+  const names = ['uRes','uT','uBass','uMid','uAir','uPhase','uHue','uBright','uPrev','uScene','uSrc'];
+  const u = {}; for(const n of names) u[n] = gl.getUniformLocation(p, n);
+  return u;
+}
+function setCommon(gl, u, w, h, t, bright){
+  gl.uniform2f(u.uRes, w, h);
+  gl.uniform1f(u.uT, t);
+  gl.uniform1f(u.uBass, F.bands[0]*0.6 + F.bands[1]*0.4);
+  gl.uniform1f(u.uMid, F.bands[3]);
+  gl.uniform1f(u.uAir, F.bands[5]);
+  gl.uniform1f(u.uPhase, F.beatPhase);
+  gl.uniform1f(u.uHue, hueOf(F.chord.root) + (F.chord.quality === 'min' ? 0.045 : 0));
+  gl.uniform1f(u.uBright, bright);
+}
+function sizeCanvas(c, maxDpr){
+  const dpr = Math.min(devicePixelRatio || 1, maxDpr);
+  const w = Math.max(1, Math.round(c.clientWidth * dpr));
+  const h = Math.max(1, Math.round(c.clientHeight * dpr));
+  if(c.width !== w || c.height !== h){ c.width = w; c.height = h; return true; }
+  return false;
+}
+
+function makeTarget(gl, w, h){
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const f = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return { t, f };
+}
+
+/* --- one renderer, used twice. Both canvases run the same two pass
+   ping pong the spec describes; only the scene id differs. --- */
+function makeRenderer(canvas, dprCap){
+  const gl = canvas.getContext('webgl2', { antialias:false, alpha:false, powerPreference:'high-performance' });
+  if(!gl) return null;
+  const simP = program(gl, SIM_FS), preP = program(gl, PRESENT_FS);
+  if(!simP || !preP) return null;
+  const simU = uniforms(gl, simP), preU = uniforms(gl, preP);
+  let fbs = [], texs = [], flip = 0;
+  function alloc(){
+    for(const t of texs) gl.deleteTexture(t);
+    for(const f of fbs) gl.deleteFramebuffer(f);
+    texs = []; fbs = [];
+    for(let i = 0; i < 2; i++){
+      const r = makeTarget(gl, canvas.width, canvas.height);
+      texs.push(r.t); fbs.push(r.f);
+    }
+  }
+  function draw(t, bright, scene){
+    if(sizeCanvas(canvas, dprCap) || !fbs.length) alloc();
+    const w = canvas.width, h = canvas.height, src = flip, dst = 1 - flip;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbs[dst]);
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(simP);
+    setCommon(gl, simU, w, h, t, bright);
+    gl.uniform1i(simU.uScene, scene);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texs[src]);
+    gl.uniform1i(simU.uPrev, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(preP);
+    setCommon(gl, preU, w, h, t, bright);
+    gl.bindTexture(gl.TEXTURE_2D, texs[dst]);
+    gl.uniform1i(preU.uSrc, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    flip = dst;
+  }
+  return { alloc, draw };
+}
+
+const heroCv = document.getElementById('gl');
+const sceneCv = document.getElementById('scene');
+let sceneId = 0;
+const heroR = makeRenderer(heroCv, 1.0);
+const sceneR = makeRenderer(sceneCv, 1.05);
+if(!heroR) heroCv.style.background = 'radial-gradient(120% 90% at 32% 24%, #221A33, #08090C 70%)';
+
+const SCENE_COPY = [
+  ['A ping pong framebuffer warped, zoomed and rotated every frame so colour smears into itself. Cheapest of the three and the one that reads most immediately as a trip.', 'GPU cost: low'],
+  ['A box folded distance field marched with glow accumulation. The camera drifts, the fold distance opens on bass, and the whole structure rebuilds as harmony moves.', 'GPU cost: high'],
+  ['Density advected along a curl noise field, seeded with bright emitters. The most physically responsive of the three, and the one hands feel best on.', 'GPU cost: medium']
+];
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected','false'));
+    tab.setAttribute('aria-selected','true');
+    sceneId = +tab.dataset.scene;
+    document.getElementById('sceneCopy').textContent = SCENE_COPY[sceneId][0];
+    document.getElementById('sceneCost').textContent = SCENE_COPY[sceneId][1];
+    if(sceneR) sceneR.alloc();
+  });
+});
+
+/* --- circle of fifths wheel --- */
+const wheelCv = document.getElementById('wheel'), wctx = wheelCv.getContext('2d');
+function drawWheel(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const size = Math.max(1, Math.round(wheelCv.clientWidth * dpr));
+  if(wheelCv.width !== size){ wheelCv.width = size; wheelCv.height = size; }
+  const c = size/2, R = c*0.94, r0 = c*0.52;
+  wctx.clearRect(0,0,size,size);
+  const root = F.chord.root, qual = F.chord.quality;
+  const members = TRIADS[qual].map(iv => (root+iv)%12);
+
+  for(let s = 0; s < 12; s++){
+    const pc = (s*7)%12;
+    const a0 = (s/12)*Math.PI*2 - Math.PI/2 - Math.PI/12;
+    const a1 = a0 + Math.PI/6;
+    const isRoot = pc === root, isMember = members.includes(pc);
+    const energy = F.chroma[pc] || 0;
+    const light = isRoot ? 62 : isMember ? 50 : 30 + energy*14;
+    const sat = isMember ? 74 : 30 + energy*26;
+    const alpha = isMember ? 1 : 0.42 + energy*0.36;
+    const rr = R * (isRoot ? 1 : isMember ? 0.955 : 0.90);
+    wctx.beginPath();
+    wctx.arc(c, c, rr, a0, a1); wctx.arc(c, c, r0, a1, a0, true); wctx.closePath();
+    wctx.fillStyle = `hsla(${(s/12)*360}, ${sat}%, ${light}%, ${alpha})`;
+    wctx.fill();
+    wctx.strokeStyle = 'rgba(8,9,12,.85)'; wctx.lineWidth = dpr*1.5; wctx.stroke();
+
+    const am = (a0+a1)/2, lr = (rr + r0)/2;
+    wctx.fillStyle = isMember ? 'rgba(10,10,12,.92)' : 'rgba(234,235,239,.62)';
+    wctx.font = `${(isRoot?700:500)} ${Math.round(size*0.052)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    wctx.textAlign = 'center'; wctx.textBaseline = 'middle';
+    wctx.fillText(NOTE[pc], c + Math.cos(am)*lr, c + Math.sin(am)*lr);
+  }
+  wctx.beginPath(); wctx.arc(c, c, r0*0.99, 0, Math.PI*2);
+  wctx.fillStyle = '#08090C'; wctx.fill();
+  wctx.fillStyle = '#EAEBEF';
+  wctx.font = `600 ${Math.round(size*0.13)}px system-ui, -apple-system, sans-serif`;
+  wctx.fillText(NOTE[root] + (qual === 'min' ? 'm' : ''), c, c - size*0.018);
+  wctx.fillStyle = '#626977';
+  wctx.font = `500 ${Math.round(size*0.042)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  wctx.fillText('HUE ' + Math.round(hueOf(root)*360) + '°', c, c + size*0.075);
+}
+
+/* --- band history strip --- */
+const bandCv = document.getElementById('bandcv'), bctx = bandCv.getContext('2d');
+function drawBands(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(bandCv.clientWidth*dpr)), h = Math.max(1, Math.round(bandCv.clientHeight*dpr));
+  if(bandCv.width !== w || bandCv.height !== h){
+    bandCv.width = w; bandCv.height = h;
+    bctx.fillStyle = '#0A0B0F'; bctx.fillRect(0,0,w,h);
+  }
+  const step = Math.max(1, Math.round(2*dpr));
+  bctx.drawImage(bandCv, -step, 0);
+  bctx.fillStyle = '#0A0B0F'; bctx.fillRect(w-step, 0, step, h);
+  const lane = h/6;
+  for(let b = 0; b < 6; b++){
+    const v = clamp(F.bands[b], 0, 1);
+    bctx.fillStyle = `hsla(${38 - b*4}, ${18 + v*62}%, ${8 + v*52}%, 1)`;
+    bctx.fillRect(w-step, b*lane, step, lane-Math.max(1,dpr*0.5));
+  }
+}
+
+/* --- pitch class bars --- */
+const pcbar = document.getElementById('pcbar');
+const pcFills = [];
+for(let i = 0; i < 12; i++){
+  const wrap = document.createElement('div'); wrap.className = 'pc';
+  const track = document.createElement('div'); track.className = 'pc-track';
+  const fill = document.createElement('div'); fill.className = 'pc-fill';
+  fill.style.background = `hsl(${hueOf(i)*360}, 66%, 54%)`;
+  track.appendChild(fill);
+  const lab = document.createElement('span'); lab.className = 'pc-lab'; lab.textContent = NOTE[i];
+  wrap.append(track, lab); pcbar.appendChild(wrap); pcFills.push(fill);
+}
+
+/* --- DOM readout --- */
+const M = {
+  kick:[document.getElementById('mKick'), document.getElementById('vKick'), 0],
+  bass:[document.getElementById('mBass'), document.getElementById('vBass'), 1],
+  mid: [document.getElementById('mMid'),  document.getElementById('vMid'),  3],
+  air: [document.getElementById('mAir'),  document.getElementById('vAir'),  5]
+};
+const chordEl = document.getElementById('chordNow'), bpmEl = document.getElementById('bpmLabel');
+function updateDOM(){
+  for(const k in M){
+    const [bar, val, idx] = M[k];
+    const v = clamp(F.bands[idx], 0, 1);
+    bar.style.width = (v*100).toFixed(1) + '%';
+    bar.style.background = v > 0.62 ? 'var(--accent)' : 'var(--fg-2)';
+    val.textContent = v.toFixed(2);
+  }
+  chordEl.textContent = NOTE[F.chord.root] + (F.chord.quality === 'min' ? 'm' : '');
+  chordEl.style.color = `hsl(${hueOf(F.chord.root)*360}, 62%, 66%)`;
+  bpmEl.textContent = Math.round(F.bpm) + ' BPM';
+  for(let i = 0; i < 12; i++) pcFills[i].style.height = (clamp(F.chroma[i],0,1)*100).toFixed(1) + '%';
+}
+
+/* --- only render what is on screen --- */
+const vis = new WeakMap();
+const visObs = new IntersectionObserver(es => es.forEach(e => vis.set(e.target, e.isIntersecting)), { rootMargin: '120px' });
+[heroCv, sceneCv, wheelCv, bandCv].forEach(el => { vis.set(el, false); visObs.observe(el); });
+
+/* --- scroll reveal --- */
+const revObs = new IntersectionObserver(es => {
+  es.forEach(e => { if(e.isIntersecting){ e.target.classList.add('in'); revObs.unobserve(e.target); } });
+}, { rootMargin: '0px 0px -12% 0px', threshold: 0.05 });
+const hasViewTimeline = window.CSS && CSS.supports && CSS.supports('animation-timeline: view()');
+if(!hasViewTimeline){
+  document.querySelectorAll('.rev').forEach((el, i) => {
+    el.style.transitionDelay = Math.min(i % 5, 4) * 55 + 'ms';
+    revObs.observe(el);
+  });
+}
+
+/* --- main loop --- */
+let t0 = performance.now(), last = t0, frame = 0;
+function tick(now){
+  const dt = Math.min(0.05, (now - last)/1000); last = now;
+  const t = Math.max(0, (now - t0)/1000);   // rAF stamps can predate t0
+
+  if(analyser) analyse(dt); else synth(t);
+
+  const drive = F.bands[0]*0.55 + F.bands[1]*0.30 + F.rms*0.15;
+  const bright = limitFlash(clamp(drive, 0, 1), now);
+
+  if(heroR && vis.get(heroCv)) heroR.draw(t, bright, 3);
+  if(sceneR && vis.get(sceneCv)) sceneR.draw(t, bright, sceneId);
+
+  if(vis.get(wheelCv) && frame % 3 === 0) drawWheel();
+  if(vis.get(bandCv)) drawBands();
+  if(frame % 2 === 0) updateDOM();
+  frame++;
+
+  if(!REDUCE) raf = requestAnimationFrame(tick);
+}
+
+let raf = 0;
+function start(){ if(!raf && !REDUCE){ last = performance.now(); raf = requestAnimationFrame(tick); } }
+function stop(){ if(raf){ cancelAnimationFrame(raf); raf = 0; } }
+document.addEventListener('visibilitychange', () => document.hidden ? stop() : start());
+
+document.getElementById('micBtn').addEventListener('click', e => enableMic(e.currentTarget));
+
+if(REDUCE){
+  // one representative frame, then nothing moves
+  synth(6.4);
+  vis.set(heroCv, true); vis.set(sceneCv, true); vis.set(wheelCv, true); vis.set(bandCv, true);
+  requestAnimationFrame(tick);
+  document.querySelectorAll('.rev').forEach(el => el.classList.add('in'));
+  drawWheel(); drawBands(); updateDOM();
+} else {
+  start();
+}
+})();
+</script>
