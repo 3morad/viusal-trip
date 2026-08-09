@@ -136,6 +136,20 @@ section[id],header[id]{scroll-margin-top:80px}
 .meter-track{height:3px; background:var(--line); border-radius:999px; overflow:hidden}
 .meter-fill{height:100%; width:0%; background:var(--fg-2); border-radius:999px; transition:width .06s linear}
 .meter-val{font-family:var(--mono); font-size:.6875rem; color:var(--fg-2); text-align:right; font-variant-numeric:tabular-nums}
+.dropzone{
+  width:100%; margin-top:14px; padding:11px 12px; cursor:pointer;
+  font-family:var(--mono); font-size:.6875rem; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--fg-3); background:transparent; border:1px dashed var(--line-2); border-radius:999px;
+  transition:color .2s var(--ease), border-color .2s var(--ease), background .2s var(--ease);
+}
+.dropzone:hover{color:var(--fg-2); border-color:var(--fg-3)}
+.hero.over .dropzone{color:var(--accent); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, transparent)}
+.hint{
+  margin-top:10px; font-family:var(--mono); font-size:.6875rem; line-height:1.5;
+  color:var(--dead); display:none;
+}
+.hint.show{display:block}
+.hint a{color:var(--accent); text-underline-offset:3px}
 .readout-foot{
   display:flex; align-items:center; justify-content:space-between; gap:12px;
   margin-top:16px; padding-top:14px; border-top:1px solid var(--line);
@@ -359,6 +373,9 @@ section[id],header[id]{scroll-margin-top:80px}
           <span>Detected chord</span>
           <span class="chord-now" id="chordNow">Am</span>
         </div>
+        <button class="dropzone" id="dropzone" type="button">Drop an audio file, or click to choose</button>
+        <input type="file" id="fileInput" accept="audio/*" hidden>
+        <p class="hint" id="hint"></p>
       </div>
     </div>
   </div>
@@ -446,7 +463,7 @@ section[id],header[id]{scroll-margin-top:80px}
       <div class="wheel-copy rev">
         <p class="lede">A twelve bin chroma vector falls out of the FFT almost for free. Fold every bin between C3 and C7 down to its pitch class, sum the linear magnitudes, and you have the harmonic content of the moment without knowing anything about the track.</p>
         <p class="lede">Matching that vector against twenty four triad templates by cosine similarity gives the chord. Ordering the twelve pitch classes by fifths rather than by semitone means harmonically close chords land close in hue, so a ii V I drifts through neighbouring colour instead of strobing across the wheel.</p>
-        <p class="lede">Chord changes commit only after four consecutive frames agree, roughly 340ms. Passing tones and grace notes never reach the renderer.</p>
+        <p class="lede">A chord commits only once the same triad has kept winning for 180ms, held in seconds rather than frames so the feel does not change with frame rate. Passing tones and grace notes never reach the renderer.</p>
         <div class="pcbar" id="pcbar" aria-hidden="true"></div>
       </div>
     </div>
@@ -531,7 +548,7 @@ section[id],header[id]{scroll-margin-top:80px}
           <div class="gmap-row"><span class="gmap-in">Both palms pushing out</span><span class="gmap-out">crossfade to next scene</span></div>
           <div class="gmap-row"><span class="gmap-in">Pinch held past 600ms</span><span class="gmap-out">latch current parameter</span></div>
         </div>
-        <p class="gnote">A pose fires only after five consecutive agreeing frames and a 300ms cooldown. Transitional shapes between two deliberate gestures never trigger anything.</p>
+        <p class="gnote">A pose fires only once it has been held for 120ms, then locks out for 300ms. Both are wall clock, not frame counts. Transitional shapes between two deliberate gestures never trigger anything.</p>
       </div>
     </div>
   </div>
@@ -668,6 +685,8 @@ const F = {
   source: 'synthetic'
 };
 
+window.CHROMA = F;   // read only handle, handy when tuning
+
 /* --- synthetic signal: a four bar loop so the page has something to show --- */
 const PROG = [ [9,'min'], [5,'maj'], [0,'maj'], [7,'maj'] ];
 const TRIADS = { maj:[0,4,7], min:[0,3,7] };
@@ -705,32 +724,81 @@ let analyser = null, freq = null, sr = 48000, prevMag = null;
 const BAND_HZ = [[20,60],[60,150],[150,400],[400,1200],[1200,3500],[3500,12000]];
 const env = new Float32Array(6);
 const peak = new Float32Array(6).fill(0.02);
-let chordVotes = [], stableChord = { root: 9, quality: 'min' };
+let stableChord = { root: 9, quality: 'min' };
+let candRoot = -1, candQ = '', candSince = 0, chordClock = 0;
+const CHORD_HOLD = 0.18;   // seconds a triad must keep winning before it commits
+
+let audioCtx = null, fileSrc = null;
+function ensureCtx(){
+  if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function attachAnalyser(ctx, node, audible){
+  sr = ctx.sampleRate;
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = 4096;
+  analyser.smoothingTimeConstant = 0.55;
+  node.connect(analyser);
+  if(audible) analyser.connect(ctx.destination);   // never for the mic, that is a feedback loop
+  freq = new Float32Array(analyser.frequencyBinCount);
+  prevMag = new Float32Array(analyser.frequencyBinCount);
+  peak.fill(0.02); env.fill(0); candRoot = -1; candQ = ''; chordClock = 0; candSince = 0;
+}
+function setSource(label, kind){
+  F.source = kind;
+  document.getElementById('srcLabel').textContent = label;
+  document.getElementById('hint').classList.remove('show');
+}
+function showHint(html){
+  const h = document.getElementById('hint');
+  h.innerHTML = html; h.classList.add('show');
+}
+
+async function playFile(file){
+  try {
+    const ctx = ensureCtx();
+    await ctx.resume();
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer());
+    if(fileSrc){ try { fileSrc.stop(); } catch(e){} }
+    fileSrc = ctx.createBufferSource();
+    fileSrc.buffer = buf; fileSrc.loop = true;
+    attachAnalyser(ctx, fileSrc, true);
+    fileSrc.start();
+    const name = file.name.length > 26 ? file.name.slice(0, 24) + '..' : file.name;
+    setSource(name, 'file');
+  } catch (err) {
+    showHint('That file could not be decoded. Try a WAV, MP3, FLAC or M4A.');
+  }
+}
 
 async function enableMic(btn){
   btn.setAttribute('aria-busy','true');
   try {
+    if(!navigator.mediaDevices || !window.isSecureContext) throw { name: 'InsecureContext' };
     const stream = await navigator.mediaDevices.getUserMedia({
+      // all three must be off, or the browser will clean the spectrum before we see it
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
     });
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = ensureCtx();
     await ctx.resume();
-    sr = ctx.sampleRate;
-    analyser = ctx.createAnalyser();
-    analyser.fftSize = 4096;
-    analyser.smoothingTimeConstant = 0.55;
-    ctx.createMediaStreamSource(stream).connect(analyser);
-    freq = new Float32Array(analyser.frequencyBinCount);
-    prevMag = new Float32Array(analyser.frequencyBinCount);
-    F.source = 'mic';
-    document.getElementById('srcLabel').textContent = 'Live microphone';
+    attachAnalyser(ctx, ctx.createMediaStreamSource(stream), false);
+    setSource('Live microphone', 'mic');
     btn.textContent = 'Listening';
     btn.disabled = true;
     btn.classList.remove('btn-primary');
     btn.classList.add('btn-ghost');
   } catch (err) {
-    document.getElementById('srcLabel').textContent = 'Mic unavailable';
-    btn.textContent = 'Use my mic';
+    const framed = window.self !== window.top;
+    if(err && err.name === 'NotFoundError'){
+      showHint('No audio input device found. Drop a file below instead.');
+    } else if(err && err.name === 'InsecureContext'){
+      showHint('Microphone capture needs https or localhost. Drop a file below instead.');
+    } else if(framed){
+      showHint('This frame blocks microphone access. <a href="' + location.href + '" target="_blank" rel="noopener">Open in a new tab</a>, or drop a file below.');
+    } else {
+      showHint('Microphone permission was declined. Allow it in the address bar and press the button again, or drop a file below.');
+    }
+    document.getElementById('srcLabel').textContent = 'Synthetic signal';
   }
   btn.removeAttribute('aria-busy');
 }
@@ -785,10 +853,11 @@ function analyse(dt){
       if (sim > best){ best = sim; bestRoot = r; bestQ = q; }
     }
   }
-  chordVotes.push(bestRoot * 2 + (bestQ === 'min' ? 1 : 0));
-  if (chordVotes.length > 4) chordVotes.shift();
-  if (chordVotes.length === 4 && chordVotes.every(v => v === chordVotes[0])){
-    stableChord = { root: bestRoot, quality: bestQ };
+  chordClock += dt;
+  if (bestRoot !== candRoot || bestQ !== candQ){
+    candRoot = bestRoot; candQ = bestQ; candSince = chordClock;
+  } else if (chordClock - candSince >= CHORD_HOLD){
+    stableChord = { root: candRoot, quality: candQ };
   }
   F.chord.root = stableChord.root; F.chord.quality = stableChord.quality; F.chord.confidence = best;
 }
@@ -1189,6 +1258,22 @@ function stop(){ if(raf){ cancelAnimationFrame(raf); raf = 0; } }
 document.addEventListener('visibilitychange', () => document.hidden ? stop() : start());
 
 document.getElementById('micBtn').addEventListener('click', e => enableMic(e.currentTarget));
+
+const fileInput = document.getElementById('fileInput');
+const hero = document.querySelector('.hero');
+document.getElementById('dropzone').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if(e.target.files[0]) playFile(e.target.files[0]); });
+['dragenter','dragover'].forEach(ev => hero.addEventListener(ev, e => {
+  e.preventDefault(); hero.classList.add('over');
+}));
+['dragleave','drop'].forEach(ev => hero.addEventListener(ev, e => {
+  e.preventDefault(); if(ev === 'dragleave' && hero.contains(e.relatedTarget)) return;
+  hero.classList.remove('over');
+}));
+hero.addEventListener('drop', e => {
+  const f = e.dataTransfer && e.dataTransfer.files[0];
+  if(f) playFile(f);
+});
 
 if(REDUCE){
   // one representative frame, then nothing moves
