@@ -220,24 +220,56 @@ async function listInputs(){
              .map(function(d){ return { id: d.deviceId, label: d.label || 'Input' }; });
 }
 
-/* Fallback when no cable is installed. Chrome only offers system audio next
-   to a tab or the whole screen, and only on Windows; a window share hands
-   back everything the machine is playing, not just that window. */
-async function useSystemAudio(){
+/* Sharing a tab hands back that tab's audio and nothing else, on every
+   platform. That is the one route to the music on its own that costs the
+   listener nothing: no driver, no routing, no install. Whole screen capture
+   is kept for desktop players, but it picks up every other sound too. */
+async function captureDisplay(tabOnly){
   try {
     if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) throw { name: 'Unsupported' };
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 1 },        // required, and kept as cheap as it goes
+    const opts = {
+      video: { frameRate: 1 },        // required by the API, kept as cheap as it goes
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      systemAudio: 'include', selfBrowserSurface: 'exclude'
-    });
+      selfBrowserSurface: 'exclude',  // no hall of mirrors
+      suppressLocalAudioPlayback: false
+    };
+    if(tabOnly){
+      // steer the picker at tabs: everything else here drags the rest of the machine in
+      opts.video.displaySurface = 'browser';
+      opts.monitorTypeSurfaces = 'exclude';
+      opts.systemAudio = 'exclude';
+    } else {
+      opts.systemAudio = 'include';
+    }
+    const stream = await navigator.mediaDevices.getDisplayMedia(opts);
     if(!stream.getAudioTracks().length){
       stream.getTracks().forEach(function(t){ t.stop(); });
-      showHint('That share had no audio. Pick a tab or the whole screen and tick "Share system audio".');
+      showHint(tabOnly
+        ? 'That tab shared no audio. Pick the tab the music is in and tick "Also share tab audio".'
+        : 'That share had no audio. Tick "Also share system audio" in the dialog.');
       return false;
     }
-    return await useAudioStream(stream, 'System audio', 'system');
+    // DRM material hands back a track that only ever carries silence
+    if(tabOnly) watchForSilentCapture();
+    return await useAudioStream(stream, tabOnly ? 'Tab audio' : 'System audio', 'system');
   } catch (err) { return captureFailed(err); }
+}
+function useSystemAudio(){ return captureDisplay(false); }
+function useTabAudio(){ return captureDisplay(true); }
+
+/* Spotify's web player is encrypted, and an encrypted tab shares a track that
+   stays at digital zero rather than failing, so say so instead of leaving the
+   picture dead with no explanation. */
+function watchForSilentCapture(){
+  const started = performance.now();
+  const check = setInterval(function(){
+    if(!analyser || F.source !== 'system'){ clearInterval(check); return; }
+    if(F.live){ clearInterval(check); return; }
+    if(performance.now() - started > 6000){
+      clearInterval(check);
+      showHint('That tab is sending silence. Encrypted players such as Spotify cannot be captured; try YouTube, SoundCloud or a file.');
+    }
+  }, 500);
 }
 
 /* ---------------------------------------------------------------
@@ -1031,7 +1063,8 @@ global.ChromaEngine = {
   analyse: function (dt) { if (analyser) { analyse(dt); return true; } return false; },
   hasInput: function () { return !!analyser; },
   enableMic: enableMic, useAudioStream: useAudioStream, playFile: playFile, micBlocked: micBlocked,
-  useDevice: useDevice, listInputs: listInputs, useSystemAudio: useSystemAudio,
+  useDevice: useDevice, listInputs: listInputs,
+  useSystemAudio: useSystemAudio, useTabAudio: useTabAudio,
   knownTracks: function(){ return known; },
   forgetTracks: function(){ known = []; rememberTrack(); },
   limitFlash: limitFlash,
