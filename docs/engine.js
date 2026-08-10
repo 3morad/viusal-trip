@@ -27,8 +27,28 @@ const F = {
   /* what this particular track looks like: a stable seed and a layout choice,
      both derived from the sound itself since there is no metadata to ask */
   seed: new Float32Array(4), variant: 0, trackId: 0,
+  /* which form each instrument is drawn as on this track, so the kick is a
+     different object from one track to the next rather than the same ring */
+  forms: new Int32Array(5),
+  /* which of Klüver's form constants this track lives in: radial frequency,
+     whole number angular winding, and how far towards a honeycomb it sits */
+  cortW: 4.5, cortN: 0, cortHex: 0,
   source: 'synthetic'
 };
+
+/* Every hit becomes an object with a life of its own. Driving brightness from
+   an envelope smears hits together; giving each one its own entry means each
+   kick is actually expressed, and each instrument keeps its own shape. */
+const MAXEV = 28;
+const evA = new Float32Array(MAXEV * 4);      // x, y, size, form
+const evB = new Float32Array(MAXEV * 4);      // age, hue, strength, instrument
+const events = [];
+const INST = ['kick','snare','hat','bass','melody'];
+const REFRACT = { kick: 0.11, snare: 0.09, hat: 0.045, bass: 0.22, melody: 0.16 };
+const LIFE    = { kick: 1.5,  snare: 1.1,  hat: 0.55,  bass: 2.6,  melody: 2.2 };
+const prevLvl = { kick: 0, snare: 0, hat: 0, bass: 0, melody: 0 };
+const lastFire = { kick: 0, snare: 0, hat: 0, bass: 0, melody: 0 };
+let evClock = 0, evSpin = 0;
 
 /* --- synthetic signal: a four bar loop so the page has something to show --- */
 const PROG = [ [9,'min'], [5,'maj'], [0,'maj'], [7,'maj'] ];
@@ -66,6 +86,8 @@ function synth(t){
   F.beatCount = Math.floor(beat) % 4;
   F.bar = F.beatCount === 0 ? F.beat : 0;
   F.bpmLock = 1;
+  spawnEvents(1 / 60);
+  packEvents();
 }
 
 /* --- real analysis --- */
@@ -500,6 +522,9 @@ function resetTrack(){
   fpQuiet = 0; fpAge = 0; fpDrift = 0; fpHave = false;
   F.seed[0] = 0.5; F.seed[1] = 0.5; F.seed[2] = 0.5; F.seed[3] = 0.5;
   F.variant = 0; F.trackId = 0;
+  // a spread of forms up front, so it never opens with everything on one shape
+  F.forms[0] = 1; F.forms[1] = 2; F.forms[2] = 7; F.forms[3] = 4; F.forms[4] = 5;
+  events.length = 0; F.evCount = 0;
 }
 
 /* Stable hash, so a track that comes back gets the look it had before. The
@@ -524,9 +549,15 @@ function commitTrack(){
     if(s > best){ best = s; at = i; }
   }
   if(at >= 0 && best > KNOWN_NEAR){
-    F.seed.set(known[at].seed);
-    F.variant = known[at].variant;
-    return;
+    const k = known[at];
+    F.seed.set(k.seed);
+    F.variant = k.variant;
+    // entries written before forms existed fall through to a fresh deal
+    if(k.forms && k.forms.length === 5 && typeof k.cortW === 'number'){
+      F.forms.set(k.forms);
+      F.cortW = k.cortW; F.cortN = k.cortN; F.cortHex = k.cortHex;
+      return;
+    }
   }
 
   /* Four coarse descriptors, not eighteen fine ones. Hashing the full profile
@@ -563,8 +594,23 @@ function commitTrack(){
   F.seed[2] = clamp((F.bpm - 70) / 110, 0, 1);             // slow against fast
   F.seed[3] = frac(h2);
   F.variant = h1 % 4;
+  /* Deal each instrument a form. Spreading the picks apart keeps two
+     instruments off the same shape, which is what made tracks look alike. */
+  for(let i = 0; i < 5; i++) F.forms[i] = (((h1 >>> (i * 3)) + i * 3) % 8) | 0;
 
-  known.push({ p: Array.prototype.slice.call(fpCur), seed: Array.from(F.seed), variant: F.variant });
+  /* Put the track in one of Klüver's four. Zero winding is a tunnel, no
+     radial frequency is a funnel of rays, both together is a spiral, and a
+     share of the tracks get the honeycomb instead. */
+  const pick = h2 % 4;
+  F.cortN = (h1 % 7) | 0;
+  F.cortW = 2.0 + F.seed[1] * 7.0;
+  if(pick === 0){ F.cortN = 0; }                       // tunnel
+  else if(pick === 1){ F.cortW = 0.0; F.cortN = 3 + (h1 % 6); }   // rays
+  F.cortHex = pick === 3 ? 1 : 0;                      // honeycomb
+
+  known.push({ p: Array.prototype.slice.call(fpCur), seed: Array.from(F.seed),
+               variant: F.variant, forms: Array.from(F.forms),
+               cortW: F.cortW, cortN: F.cortN, cortHex: F.cortHex });
   rememberTrack();
 }
 
@@ -597,6 +643,65 @@ function trackWatch(dt){
   fpDrift += (far > 0.34 ? dt : -dt * 1.5);
   fpDrift = clamp(fpDrift, 0, 6);
   if(fpDrift > 3.5 && fpAge > 20) commitTrack();
+}
+
+/* A hit fires when its level jumps, not when it is merely loud, with a short
+   refusal after each one so a single kick does not become five. */
+function spawnEvents(dt){
+  evClock += dt;
+  evSpin += dt * (0.3 + F.seed[2] * 0.8);
+  for(let i = 0; i < 5; i++){
+    const k = INST[i], v = F[k], rise = v - prevLvl[k];
+    prevLvl[k] = v;
+    if(v < 0.28 || rise < 0.09) continue;
+    if(evClock - lastFire[k] < REFRACT[k]) continue;
+    lastFire[k] = evClock;
+    addEvent(i, k, v);
+  }
+  for(let i = events.length - 1; i >= 0; i--)
+    if(evClock - events[i].born > LIFE[INST[events[i].inst]]) events.splice(i, 1);
+}
+
+/* Each instrument keeps to its own part of the frame, so you can tell them
+   apart even once they have melted together. */
+function addEvent(idx, k, str){
+  const s = F.seed, ang = evSpin * 0.6 + Math.random() * 6.28318;
+  let x, y, size;
+  if(k === 'kick'){
+    x = (Math.random() - 0.5) * 0.12; y = (Math.random() - 0.5) * 0.12;
+    size = 0.055 + str * 0.055;
+  } else if(k === 'bass'){
+    x = (Math.random() - 0.5) * 1.25; y = -0.16 - Math.random() * 0.26;
+    size = 0.15 + str * 0.15;
+  } else if(k === 'snare'){
+    x = ((events.length & 1) ? 1 : -1) * (0.20 + Math.random() * 0.36);
+    y = (Math.random() - 0.5) * 0.52;
+    size = 0.075 + str * 0.075;
+  } else if(k === 'hat'){
+    const r = 0.40 + Math.random() * 0.24;
+    x = Math.cos(ang) * r * 1.45; y = Math.sin(ang) * r;
+    size = 0.020 + str * 0.024;
+  } else {
+    const r = 0.15 + Math.random() * 0.32;
+    x = Math.cos(evSpin * 0.7 + s[3] * 6.28) * r * 1.5;
+    y = Math.sin(evSpin * 1.1 + s[3] * 6.28) * r;
+    size = 0.095 + str * 0.10;
+  }
+  if(events.length >= MAXEV) events.shift();
+  events.push({ x: x, y: y, size: size, form: F.forms[idx], born: evClock,
+                hue: (hueOf(F.chord.root) + s[0] * 0.42 + idx * 0.13) % 1,
+                str: str, inst: idx });
+}
+
+function packEvents(){
+  let n = 0;
+  for(let i = 0; i < events.length && n < MAXEV; i++, n++){
+    const e = events[i], o = n * 4;
+    evA[o] = e.x; evA[o+1] = e.y; evA[o+2] = e.size; evA[o+3] = e.form;
+    evB[o] = clamp((evClock - e.born) / LIFE[INST[e.inst]], 0, 1);   // life, already normalised
+    evB[o+1] = e.hue; evB[o+2] = e.str; evB[o+3] = e.inst;
+  }
+  F.evCount = n;
 }
 
 function analyse(dt){
@@ -663,6 +768,8 @@ function analyse(dt){
   pushOnset(flux, dt);
   runBeatClock(dt);
   trackWatch(dt);
+  spawnEvents(dt);
+  packEvents();
 
   // 24 triad templates, cosine similarity, then four frames of agreement
   let best = -1, bestRoot = 0, bestQ = 'maj';
@@ -714,6 +821,7 @@ uniform vec2 uRes; uniform float uT,uBass,uMid,uAir,uPhase,uHue,uBright;
 uniform float uPinch,uSpread,uHueOff,uRoll,uGain;
 uniform float uBeat,uBar,uKick,uSnare;
 uniform vec4 uSeed; uniform int uVariant;
+uniform float uCortW, uCortN, uCortHex, uCortAmp;
 #define MAXITEM 32
 uniform int uCount;
 uniform vec4 uItemA[MAXITEM];   // xy position, z size, w type
@@ -753,6 +861,97 @@ vec3 items(vec2 p){
   }
   return acc*0.085;
 }
+/* ---- the cortical field ------------------------------------------------
+   Klüver catalogued four shapes that recur across mescaline, LSD and
+   psilocybin: tunnels, spirals, lattices and cobwebs. Ermentrout and Cowan
+   showed why. The map from retina to V1 is logarithmic, x = ln r and
+   y = theta, so plain stripes of cortical activity are seen as rings when
+   they run one way, as rays when they run the other, and as spirals in
+   between; a hexagonal cortical pattern is seen as a honeycomb.
+
+   So this does not imitate those pictures, it draws them the way the cortex
+   is thought to make them. One wave, cos(w*ln r + n*theta), covers all of
+   them: n = 0 is a tunnel, w = 0 is a funnel of rays, both together spiral.
+   n has to stay a whole number or the pattern tears where theta wraps. */
+float cortex(vec2 p, float phase){
+  float r = max(length(p), 1e-3);
+  float th = atan(p.y, p.x);
+  float lr = log(r);
+  float w = cos(uCortW*lr + uCortN*th - phase);
+  if(uCortHex > 0.01){
+    // two more waves turned away from the first: stripes become a honeycomb
+    float m = max(1.0, floor(uCortN*0.5) + 3.0);
+    float b2 = -0.5*uCortW*lr + m*th - phase*0.8;
+    float b3 = -0.5*uCortW*lr - m*th - phase*0.8;
+    w = mix(w, (w + cos(b2) + cos(b3))*0.333, uCortHex);
+  }
+  return w;
+}
+
+/* ---- the form library -------------------------------------------------
+   Eight ways a hit can be drawn. Each track hands its instruments a
+   different set, so the kick is a ring on one track and a rosette on the
+   next, rather than the same shape wearing a new colour. */
+#define MAXEV 28
+uniform int uEvCount;
+uniform vec4 uEvA[MAXEV];   // xy position, z size, w form
+uniform vec4 uEvB[MAXEV];   // x life 0..1, y hue, z strength, w instrument
+
+float smax(float a, float b, float k){
+  float h = clamp(0.5 + 0.5*(b - a)/k, 0.0, 1.0);
+  return mix(a, b, h) + k*h*(1.0 - h);
+}
+float formOf(int f, vec2 q, float sz, float t, float str){
+  float d = length(q), a = atan(q.y, q.x);
+  float fade = (1.0 - t)*(1.0 - t);
+  float e = 0.0;
+  if(f == 0){                       // ring: races out and thins
+    float r = sz + t*0.60;
+    e = exp(-pow((d - r)/(sz*0.5 + 0.010), 2.0));
+  } else if(f == 1){                // blob: swells, then sinks
+    float r = sz*(1.0 + t*0.85);
+    e = exp(-(d*d)/(r*r));
+  } else if(f == 2){                // shard: one narrow blade
+    e = pow(abs(cos(a*0.5)), 26.0) * exp(-d*d/(sz*sz*9.0));
+  } else if(f == 3){                // rosette: petals opening
+    float petal = pow(abs(cos(a*3.0 + t*2.0)), 5.0);
+    e = petal * exp(-pow((d - sz*(0.6 + t*1.5))/(sz*0.85), 2.0));
+  } else if(f == 4){                // lattice: a patch of cells
+    vec2 g = fract(q/(sz*0.75)) - 0.5;
+    float cell = 1.0 - smoothstep(0.16, 0.40, length(g));
+    e = cell * exp(-d*d/(sz*sz*7.0));
+  } else if(f == 5){                // filament: a thin drawn arc
+    float arc = abs(d - sz*(0.8 + t*1.1));
+    e = exp(-pow(arc/(sz*0.16 + 0.004), 2.0)) * (0.45 + 0.55*cos(a*2.0 + t*4.0));
+  } else if(f == 6){                // burst: spokes thrown outward
+    float sp = pow(abs(sin(a*5.0 + str*3.0)), 16.0);
+    e = sp * exp(-d/(sz*(1.5 + t*4.0)));
+  } else {                          // bubble: hollow, with a bright rim
+    float r = sz*(1.0 + t*1.2);
+    e = exp(-pow((d - r)/(r*0.30), 2.0))*0.85 + exp(-(d*d)/(r*r))*0.20;
+  }
+  return max(e, 0.0) * fade;
+}
+
+/* Every live hit, warped by one shared field so neighbours flow into each
+   other, then unioned smoothly so overlaps swell instead of stacking. */
+vec3 drawEvents(vec2 p){
+  vec2 w = vec2(fbm3(p*1.5 + uT*0.05), fbm3(p*1.5 + vec2(4.1,2.3) - uT*0.05)) - 0.5;
+  vec2 pw = p + w*(0.055 + uBass*0.075);
+  vec3 col = vec3(0.0);
+  float field = 0.0;
+  for(int i = 0; i < MAXEV; i++){
+    if(i >= uEvCount) break;
+    vec4 A = uEvA[i], B = uEvB[i];
+    float e = formOf(int(A.w), pw - A.xy, max(A.z, 0.008), B.x, B.z);
+    col += pal(B.y + e*0.18) * e * B.z;
+    field = smax(field, e, 0.32);          // this is the melt
+  }
+  // where several forms overlap the union blooms, so they read as one body
+  col += pal(uHue + 0.15) * pow(clamp(field, 0.0, 1.0), 2.2) * 0.22;
+  return col * 0.115;
+}
+
 vec2 fold(vec2 p){
   if(uSpread < 0.02) return p;
   float seg = 2.0 + floor(uSpread*7.0);
@@ -829,7 +1028,12 @@ vec3 elemMelody(vec2 p){
 
 vec3 src0(vec2 p){
   float r = length(p), a = atan(p.y, p.x);
-  return elemBass(p) + elemMelody(p) + elemKick(r, a) + elemSnare(r, a) + elemHat(p, r);
+  /* the cortical bed underneath, the sustained parts over it, then every
+     individual hit on top, so nothing that happens in the track is silent */
+  float c = cortex(p, uT*0.22 + uPhase*3.14159);
+  float ridge = pow(max(c, 0.0), 3.0);              // keep the crests, drop the troughs
+  vec3 bed = pal(uHue + c*0.10 + r*0.12) * ridge * uCortAmp * 0.055;
+  return bed + elemBass(p)*0.6 + elemMelody(p)*0.5 + elemHat(p, r)*0.7 + drawEvents(p);
 }
 
 /* How the previous frame is moved before the new one is added. A constant
@@ -956,7 +1160,9 @@ function program(gl, fs){
 function uniforms(gl, p){
   const names = ['uRes','uT','uBass','uMid','uAir','uPhase','uHue','uBright','uPrev','uScene','uSrc',
                  'uPinch','uSpread','uHueOff','uRoll','uGain','uCount','uItemA','uItemB',
-                 'uBeat','uBar','uKick','uSnare','uSeed','uVariant'];
+                 'uBeat','uBar','uKick','uSnare','uSeed','uVariant',
+                 'uEvCount','uEvA','uEvB',
+                 'uCortW','uCortN','uCortHex','uCortAmp'];
   const u = {}; for(const n of names) u[n] = gl.getUniformLocation(p, n);
   return u;
 }
@@ -984,6 +1190,16 @@ function setCommon(gl, u, w, h, t, bright, g){
   gl.uniform1f(u.uPhase, F.beatPhase);
   gl.uniform4fv(u.uSeed, F.seed);
   gl.uniform1i(u.uVariant, F.variant | 0);
+  const ev = F.evCount | 0;
+  gl.uniform1i(u.uEvCount, ev);
+  if (ev > 0) { gl.uniform4fv(u.uEvA, evA); gl.uniform4fv(u.uEvB, evB); }
+  /* Which form constant this track sits in. The winding has to be a whole
+     number, and the bass bends the spiral pitch so the shape itself moves
+     with the music rather than only its brightness. */
+  gl.uniform1f(u.uCortW, F.cortW + F.bass * 1.6);
+  gl.uniform1f(u.uCortN, F.cortN);
+  gl.uniform1f(u.uCortHex, F.cortHex);
+  gl.uniform1f(u.uCortAmp, 0.25 + F.melody * 0.55 + F.bass * 0.35);
   // the chord still moves the hue within a track; the seed sets where it sits
   gl.uniform1f(u.uHue, hueOf(F.chord.root) + (F.chord.quality === 'min' ? 0.045 : 0)
                        + F.seed[0] * 0.42);
