@@ -6,7 +6,7 @@
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* Bumped whenever the engine changes. Shown in the corner so there is never
    a question of whether a reload actually picked the new code up. */
-const BUILD = 'b8';
+const BUILD = 'b9';
 
 const NOTE = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
@@ -674,7 +674,10 @@ function addEvent(idx, k, str){
     x = (Math.random() - 0.5) * 0.12; y = (Math.random() - 0.5) * 0.12;
     size = 0.055 + str * 0.055;
   } else if(k === 'bass'){
-    x = (Math.random() - 0.5) * 1.25; y = -0.16 - Math.random() * 0.26;
+    // spread wide rather than always low, or bass becomes a permanent strip
+    const t = evSpin * 0.23 + s[3] * 6.28318;
+    x = Math.cos(t) * (0.30 + Math.random() * 0.55) * 1.5;
+    y = Math.sin(t * 1.31) * (0.18 + Math.random() * 0.26);
     size = 0.15 + str * 0.15;
   } else if(k === 'snare'){
     x = ((events.length & 1) ? 1 : -1) * (0.20 + Math.random() * 0.36);
@@ -1036,7 +1039,11 @@ vec3 src0(vec2 p){
   float c = cortex(p, uT*0.22 + uPhase*3.14159);
   float ridge = pow(max(c, 0.0), 3.0);              // keep the crests, drop the troughs
   vec3 bed = pal(uHue + c*0.10 + r*0.12) * ridge * uCortAmp * 0.055;
-  return bed + elemBass(p)*0.6 + elemMelody(p)*0.5 + elemHat(p, r)*0.7 + drawEvents(p);
+  /* Only a trace of the hits goes into the buffer, purely to leave a wake.
+     The buffer resamples itself every frame, which is a repeated blur: draw
+     the hits in full here and they are soft blobs within ten frames. They go
+     in sharp at the end instead. */
+  return bed + elemBass(p)*0.6 + elemMelody(p)*0.5 + elemHat(p, r)*0.7 + drawEvents(p)*0.30;
 }
 
 /* How the previous frame is moved before the new one is added. A constant
@@ -1045,6 +1052,11 @@ vec3 src0(vec2 p){
    the track picks which. The pulse stays in all of them: the kick supplies
    the movement instead of a fixed drift. */
 vec2 flow(vec2 p){
+  /* Scaling about the exact centre every frame is what makes everything come
+     out radially symmetric no matter what was drawn. Drifting the centre
+     breaks that, and costs nothing. */
+  vec2 o = vec2(sin(uT*0.037 + uSeed.x*6.28318), cos(uT*0.029 + uSeed.w*6.28318)) * 0.16;
+  p -= o;
   float rot = uRoll*0.030;
   if(uVariant == 1){                       // turning: a slow carousel, no pull in
     float a = 0.0125 + uBar*0.030 + uMid*0.008 + rot;
@@ -1141,6 +1153,8 @@ void main(){
   vec2 p = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;
   vec3 c = texture(uSrc, uv).rgb;
   c *= 0.55 + uBright*0.62;
+  // every hit, drawn once at full sharpness over its own wake
+  c += drawEvents(p) * 5.2;
   c *= 1.0 - 0.52*pow(clamp(length(p)*0.62,0.0,1.0), 2.0);
   c += (h21(gl_FragCoord.xy + uT)-0.5)*0.022;
   O = vec4(max(c,0.0), 1.0);
