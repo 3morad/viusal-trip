@@ -4,6 +4,9 @@
 (function (global) {
 "use strict";
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Bumped whenever the engine changes. Shown in the corner so there is never
+   a question of whether a reload actually picked the new code up. */
+const BUILD = 'b8';
 
 const NOTE = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
@@ -1273,7 +1276,7 @@ function makeRenderer(canvas, dprCap){
 }
 
 global.ChromaEngine = {
-  F: F, NOTE: NOTE, TRIADS: TRIADS, hueOf: hueOf, clamp: clamp, REDUCE: REDUCE,
+  F: F, NOTE: NOTE, TRIADS: TRIADS, hueOf: hueOf, clamp: clamp, REDUCE: REDUCE, BUILD: BUILD,
   hooks: hooks,
   synth: synth,
   analyse: function (dt) { if (analyser) { analyse(dt); return true; } return false; },

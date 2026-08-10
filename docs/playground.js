@@ -88,6 +88,7 @@ const trackEl = document.createElement('p');
 trackEl.style.cssText = 'margin:8px 0 0;color:#6B7382;text-align:right';
 metersEl.appendChild(trackEl);
 const tut = $('tut'), tutTop = $('tutTop');
+$('build').textContent = E.BUILD;   // so a stale cache is visible, not guessed
 E.hooks.onSource = function (label, kind) {
   tMic.setAttribute('aria-pressed', String(kind === 'mic'));
   tFile.setAttribute('aria-pressed', String(kind === 'file'));
