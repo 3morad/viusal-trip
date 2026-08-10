@@ -68,7 +68,8 @@ const filt = { pinch: OneEuro(1.2, 0.02), spread: OneEuro(1.2, 0.02),
 /* ---------- hud ---------- */
 const dot = $('dot'), chordEl = $('chord'), bpmEl = $('bpm'), hintEl = $('hint'), countEl = $('count');
 const tMic = $('tMic'), tHands = $('tHands'), tFile = $('tFile');
-const tMusic = $('tMusic'), tSys = $('tSys'), devs = $('devs'), lvl = $('lvl').firstElementChild;
+const tMusic = $('tMusic'), tSys = $('tSys'), tTab = $('tTab');
+const devs = $('devs'), lvl = $('lvl').firstElementChild;
 
 /* Element meters, on D. When something looks wrong these say whether the
    picture is at fault or the signal driving it never arrived. */
@@ -83,13 +84,19 @@ METERS.forEach(function (k) {
   metersEl.appendChild(row);
   bars[k] = fill; nums[k] = num;
 });
+const trackEl = document.createElement('p');
+trackEl.style.cssText = 'margin:8px 0 0;color:#6B7382;text-align:right';
+metersEl.appendChild(trackEl);
 const tut = $('tut'), tutTop = $('tutTop');
+$('build').textContent = E.BUILD;   // so a stale cache is visible, not guessed
 E.hooks.onSource = function (label, kind) {
   tMic.setAttribute('aria-pressed', String(kind === 'mic'));
   tFile.setAttribute('aria-pressed', String(kind === 'file'));
   tMusic.setAttribute('aria-pressed', String(kind === 'loop'));
-  tSys.setAttribute('aria-pressed', String(kind === 'system'));
-  tMic.classList.remove('busy'); tMusic.classList.remove('busy'); tSys.classList.remove('busy');
+  tTab.setAttribute('aria-pressed', String(kind === 'system' && label === 'Tab audio'));
+  tSys.setAttribute('aria-pressed', String(kind === 'system' && label !== 'Tab audio'));
+  tMic.classList.remove('busy'); tMusic.classList.remove('busy');
+  tSys.classList.remove('busy'); tTab.classList.remove('busy');
   if (kind === 'file') tFile.textContent = label.length > 14 ? label.slice(0, 12) + '..' : label;
   if (kind === 'loop') tMusic.textContent = label.length > 14 ? label.slice(0, 12) + '..' : label;
 };
@@ -140,11 +147,14 @@ function request(kind) {
            function (err) { busy = false; denied(err, kind); });
 }
 
-/* first touch asks for both at once, so it is one dialog and not two */
+/* The first touch used to ask for the microphone too, which was both a
+   prompt nobody needed and the wrong source: a mic hears the room, the
+   speakers and everything else in it. Sound comes from the music button
+   instead, so the only thing asked for here is the camera. */
 function armInputs() {
-  if (askedBoth || haveAudio || haveVideo) return;
+  if (askedBoth || haveVideo) return;
   askedBoth = true;
-  request('both');
+  request('video');
 }
 
 function say(msg, done) { tutTop.textContent = msg; tutTop.classList.toggle('done', !!done); }
@@ -341,6 +351,8 @@ addEventListener('keydown', function (e) {
   else if (k === ' ') { e.preventDefault(); hold = !hold; }
   else if (k === 'm') tMic.click();
   else if (k === 'd') metersEl.classList.toggle('on');
+  // preview the other layouts without waiting for a track change
+  else if (k === 'v') { F.variant = (F.variant + 1) % 4; hintEl.textContent = 'layout ' + F.variant; }
   else if (k === 'c') clearItems();
   else if (k === 'z') { items.pop(); countEl.textContent = items.length || ''; }
 });
@@ -379,6 +391,7 @@ async function openDevs() {
   devOpen = true; devs.classList.add('on');
 }
 tMusic.addEventListener('click', openDevs);
+tTab.addEventListener('click', function () { tTab.classList.add('busy'); E.useTabAudio(); });
 tSys.addEventListener('click', function () { tSys.classList.add('busy'); E.useSystemAudio(); });
 addEventListener('pointerdown', function (e) {
   if (devOpen && !e.target.closest('#devs') && e.target !== tMusic) closeDevs();
@@ -389,7 +402,7 @@ tFile.addEventListener('click', function () { fileIn.click(); });
 fileIn.addEventListener('change', function (e) { if (e.target.files[0]) E.playFile(e.target.files[0]); });
 tHands.addEventListener('click', function () { haveVideo ? startHands(null) : request('video'); });
 if (E.micBlocked()) { tMic.disabled = true; tMic.textContent = 'no mic'; }
-if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { tSys.disabled = true; }
+if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { tSys.disabled = tTab.disabled = true; }
 
 addEventListener('dragover', function (e) { e.preventDefault(); });
 addEventListener('drop', function (e) {
@@ -439,6 +452,7 @@ function tick(now) {
       bars[k].style.width = (clamp(F[k], 0, 1) * 100) + '%';
       nums[k].textContent = Math.round(F[k] * 100);
     });
+    trackEl.textContent = 'track ' + F.trackId + ' / layout ' + F.variant;
   }
   requestAnimationFrame(tick);
 }

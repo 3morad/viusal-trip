@@ -128,10 +128,11 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 <video id="cam" playsinline muted></video>
 
 <div id="hud">
-  <div class="hud-tl"><span class="dot" id="dot"></span><span id="chord">--</span><span id="bpm"></span><span id="lvl"><i></i></span></div>
+  <div class="hud-tl"><span class="dot" id="dot"></span><span id="chord">--</span><span id="bpm"></span><span id="lvl"><i></i></span><span id="build"></span></div>
   <div class="hud-bl">
-    <button class="tog" id="tMusic" type="button" aria-pressed="false">music</button>
-    <button class="tog" id="tSys"   type="button" aria-pressed="false">system</button>
+    <button class="tog" id="tTab"   type="button" aria-pressed="false">music</button>
+    <button class="tog" id="tSys"   type="button" aria-pressed="false">screen</button>
+    <button class="tog" id="tMusic" type="button" aria-pressed="false">device</button>
     <button class="tog" id="tMic"   type="button" aria-pressed="false">mic</button>
     <button class="tog" id="tHands" type="button" aria-pressed="false">hands</button>
     <button class="tog" id="tFile"  type="button" aria-pressed="false">file</button>
@@ -158,7 +159,10 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 <div id="devs"></div>
 
 <input type="file" id="file" accept="audio/*" hidden>
-<script src="engine.js"></script>
-<script src="playground.js"></script>
+<!-- the version is bumped with the engine: without it a plain reload keeps
+     serving whatever JavaScript the browser already had, which looks exactly
+     like a change that did not work -->
+<script src="engine.js?v=b9"></script>
+<script src="playground.js?v=b9"></script>
 </body>
 </html>

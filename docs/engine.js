@@ -4,6 +4,9 @@
 (function (global) {
 "use strict";
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Bumped whenever the engine changes. Shown in the corner so there is never
+   a question of whether a reload actually picked the new code up. */
+const BUILD = 'b9';
 
 const NOTE = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
@@ -24,8 +27,31 @@ const F = {
   beat: 0, bar: 0, beatCount: 0, bpmLock: 0,
   /* live is true only once real samples have arrived, so the UI cannot lie */
   level: 0, live: false,
+  /* what this particular track looks like: a stable seed and a layout choice,
+     both derived from the sound itself since there is no metadata to ask */
+  seed: new Float32Array(4), variant: 0, trackId: 0,
+  /* which form each instrument is drawn as on this track, so the kick is a
+     different object from one track to the next rather than the same ring */
+  forms: new Int32Array(5),
+  /* which of Klüver's form constants this track lives in: radial frequency,
+     whole number angular winding, and how far towards a honeycomb it sits */
+  cortW: 4.5, cortN: 0, cortHex: 0,
   source: 'synthetic'
 };
+
+/* Every hit becomes an object with a life of its own. Driving brightness from
+   an envelope smears hits together; giving each one its own entry means each
+   kick is actually expressed, and each instrument keeps its own shape. */
+const MAXEV = 28;
+const evA = new Float32Array(MAXEV * 4);      // x, y, size, form
+const evB = new Float32Array(MAXEV * 4);      // age, hue, strength, instrument
+const events = [];
+const INST = ['kick','snare','hat','bass','melody'];
+const REFRACT = { kick: 0.11, snare: 0.09, hat: 0.045, bass: 0.22, melody: 0.16 };
+const LIFE    = { kick: 1.5,  snare: 1.1,  hat: 0.55,  bass: 2.6,  melody: 2.2 };
+const prevLvl = { kick: 0, snare: 0, hat: 0, bass: 0, melody: 0 };
+const lastFire = { kick: 0, snare: 0, hat: 0, bass: 0, melody: 0 };
+let evClock = 0, evSpin = 0;
 
 /* --- synthetic signal: a four bar loop so the page has something to show --- */
 const PROG = [ [9,'min'], [5,'maj'], [0,'maj'], [7,'maj'] ];
@@ -63,6 +89,8 @@ function synth(t){
   F.beatCount = Math.floor(beat) % 4;
   F.bar = F.beatCount === 0 ? F.beat : 0;
   F.bpmLock = 1;
+  spawnEvents(1 / 60);
+  packEvents();
 }
 
 /* --- real analysis --- */
@@ -115,7 +143,7 @@ function attachAnalyser(ctx, node, audible){
   prevMag = new Float32Array(analyser.frequencyBinCount);
   timeBuf = new Float32Array(analyser.fftSize);
   peak.fill(0.02); env.fill(0); candRoot = -1; candQ = ''; chordClock = 0; candSince = 0;
-  resetBeat(); resetSep();
+  resetBeat(); resetSep(); resetTrack();
   F.live = false; F.level = 0; silentFor = 0;
 }
 const hooks = { onSource: function(){}, onHint: function(){} };
@@ -217,24 +245,56 @@ async function listInputs(){
              .map(function(d){ return { id: d.deviceId, label: d.label || 'Input' }; });
 }
 
-/* Fallback when no cable is installed. Chrome only offers system audio next
-   to a tab or the whole screen, and only on Windows; a window share hands
-   back everything the machine is playing, not just that window. */
-async function useSystemAudio(){
+/* Sharing a tab hands back that tab's audio and nothing else, on every
+   platform. That is the one route to the music on its own that costs the
+   listener nothing: no driver, no routing, no install. Whole screen capture
+   is kept for desktop players, but it picks up every other sound too. */
+async function captureDisplay(tabOnly){
   try {
     if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) throw { name: 'Unsupported' };
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 1 },        // required, and kept as cheap as it goes
+    const opts = {
+      video: { frameRate: 1 },        // required by the API, kept as cheap as it goes
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      systemAudio: 'include', selfBrowserSurface: 'exclude'
-    });
+      selfBrowserSurface: 'exclude',  // no hall of mirrors
+      suppressLocalAudioPlayback: false
+    };
+    if(tabOnly){
+      // steer the picker at tabs: everything else here drags the rest of the machine in
+      opts.video.displaySurface = 'browser';
+      opts.monitorTypeSurfaces = 'exclude';
+      opts.systemAudio = 'exclude';
+    } else {
+      opts.systemAudio = 'include';
+    }
+    const stream = await navigator.mediaDevices.getDisplayMedia(opts);
     if(!stream.getAudioTracks().length){
       stream.getTracks().forEach(function(t){ t.stop(); });
-      showHint('That share had no audio. Pick a tab or the whole screen and tick "Share system audio".');
+      showHint(tabOnly
+        ? 'That tab shared no audio. Pick the tab the music is in and tick "Also share tab audio".'
+        : 'That share had no audio. Tick "Also share system audio" in the dialog.');
       return false;
     }
-    return await useAudioStream(stream, 'System audio', 'system');
+    // DRM material hands back a track that only ever carries silence
+    if(tabOnly) watchForSilentCapture();
+    return await useAudioStream(stream, tabOnly ? 'Tab audio' : 'System audio', 'system');
   } catch (err) { return captureFailed(err); }
+}
+function useSystemAudio(){ return captureDisplay(false); }
+function useTabAudio(){ return captureDisplay(true); }
+
+/* Spotify's web player is encrypted, and an encrypted tab shares a track that
+   stays at digital zero rather than failing, so say so instead of leaving the
+   picture dead with no explanation. */
+function watchForSilentCapture(){
+  const started = performance.now();
+  const check = setInterval(function(){
+    if(!analyser || F.source !== 'system'){ clearInterval(check); return; }
+    if(F.live){ clearInterval(check); return; }
+    if(performance.now() - started > 6000){
+      clearInterval(check);
+      showHint('That tab is sending silence. Encrypted players such as Spotify cannot be captured; try YouTube, SoundCloud or a file.');
+    }
+  }, 500);
 }
 
 /* ---------------------------------------------------------------
@@ -254,6 +314,10 @@ let onsetHead = 0, hopAcc = 0, hopTime = 0, hopsSinceTempo = 0, silentFor = 0;
    left alone it stretches near silence up to full scale. One absolute gate,
    derived from the raw waveform, holds all of them shut when nothing plays. */
 let gate = 0;
+/* The smoothed level takes well over a second to fall, so it cannot see the
+   gap between two tracks. Gap detection reads the raw frame peak, which drops
+   the moment the audio stops. */
+let rawPk = 0;
 
 function resetBeat(){
   onsetEnv.fill(0); onsetHead = 0; hopAcc = 0; hopTime = 0; hopsSinceTempo = 0;
@@ -421,6 +485,231 @@ function separate(mag, n, hzPerBin, dt){
   }
 }
 
+/* ---------------------------------------------------------------
+   Per track identity. There is no metadata to ask for, so the track
+   has to identify itself from its own sound: a gap, or a lasting
+   change in spectral character, means a new one. The average of what
+   played becomes a stable seed, so the same track always draws the
+   same way and a different one does not.
+   --------------------------------------------------------------- */
+const FP_N = 18;                                   // 12 chroma, then 6 bands
+const fpSlow = new Float32Array(FP_N);             // what is playing now
+const fpCur = new Float32Array(FP_N);              // what this track sounded like
+let fpQuiet = 0, fpAge = 0, fpDrift = 0, fpHave = false;
+
+/* Tracks already seen, with the look each was given. Matching a new profile
+   against these by similarity is what makes a track keep its look: quantising
+   features into buckets never survived the profile landing a hair either side
+   of an edge, and a tolerance is exactly what that needs. */
+/* Measured: the same track twice lands at 0.992 or above, two different tracks
+   at 0.980 or below. The threshold sits in that gap. Getting it wrong is soft
+   either way — a miss gives a track a fresh look, a false match has two tracks
+   share one — so there is no need to be cleverer than this. */
+const KNOWN_KEY = 'chroma.tracks.v1', KNOWN_MAX = 150, KNOWN_NEAR = 0.986;
+let known = [];
+try { known = JSON.parse(localStorage.getItem(KNOWN_KEY)) || []; } catch (e) { known = []; }
+function rememberTrack(){
+  try {
+    known = known.slice(-KNOWN_MAX);
+    localStorage.setItem(KNOWN_KEY, JSON.stringify(known));
+  } catch (e) {}                          // private mode, or the quota is full
+}
+function similarity(a, b){
+  let d = 0, na = 0, nb = 0;
+  for(let i = 0; i < FP_N; i++){ d += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  return d / (Math.sqrt(na*nb) + 1e-9);
+}
+
+function resetTrack(){
+  fpSlow.fill(0); fpCur.fill(0);
+  fpQuiet = 0; fpAge = 0; fpDrift = 0; fpHave = false;
+  F.seed[0] = 0.5; F.seed[1] = 0.5; F.seed[2] = 0.5; F.seed[3] = 0.5;
+  F.variant = 0; F.trackId = 0;
+  // a spread of forms up front, so it never opens with everything on one shape
+  F.forms[0] = 1; F.forms[1] = 2; F.forms[2] = 7; F.forms[3] = 4; F.forms[4] = 5;
+  events.length = 0; F.evCount = 0;
+}
+
+/* Stable hash, so a track that comes back gets the look it had before. The
+   running average never settles on exactly the same numbers twice, so the
+   profile is normalised for loudness and quantised hard before hashing, and
+   the tempo estimate is kept out of it: it wobbles a couple of bpm between
+   plays, which was enough to land the same track on a different look. */
+function commitTrack(){
+  fpCur.set(fpSlow);
+  // normalise for loudness, so the same track played quieter still matches
+  let pk = 0;
+  for(let i = 0; i < FP_N; i++) if(fpCur[i] > pk) pk = fpCur[i];
+  if(pk > 1e-6) for(let i = 0; i < FP_N; i++) fpCur[i] /= pk;
+
+  F.trackId++;
+  fpAge = 0; fpDrift = 0; fpHave = true;
+
+  // heard before? then it keeps the look it already had
+  let best = -1, at = -1;
+  for(let i = 0; i < known.length; i++){
+    const s = similarity(fpCur, known[i].p);
+    if(s > best){ best = s; at = i; }
+  }
+  if(at >= 0 && best > KNOWN_NEAR){
+    const k = known[at];
+    F.seed.set(k.seed);
+    F.variant = k.variant;
+    // entries written before forms existed fall through to a fresh deal
+    if(k.forms && k.forms.length === 5 && typeof k.cortW === 'number'){
+      F.forms.set(k.forms);
+      F.cortW = k.cortW; F.cortN = k.cortN; F.cortHex = k.cortHex;
+      return;
+    }
+  }
+
+  /* Four coarse descriptors, not eighteen fine ones. Hashing the full profile
+     was far too brittle: a single band landing one level either side of a
+     boundary changed everything, so the same track came back looking new. */
+  /* Take the strongest pitch class only when it actually wins. On material
+     with no clear tonality the top two swap constantly, and that alone was
+     enough to send the same track to a different look on the next play. */
+  let pc = 0, chSum = 0;
+  for(let i = 1; i < 12; i++) if(fpCur[i] > fpCur[pc]) pc = i;
+  let second = 0;
+  for(let i = 0; i < 12; i++){ chSum += fpCur[i]; if(i !== pc && fpCur[i] > second) second = fpCur[i]; }
+  if(fpCur[pc] - second < 0.15 * (fpCur[pc] + 1e-6)) pc = 12;    // no clear key
+
+  // how concentrated the pitch content is: tonal music against noisy
+  const sorted = Array.prototype.slice.call(fpCur, 0, 12).sort(function(a, b){ return b - a; });
+  const tonal = clamp(Math.floor(3 * (sorted[0] + sorted[1] + sorted[2]) / (chSum + 1e-6)), 0, 2);
+
+  const lo = fpCur[12] + fpCur[13], mid = fpCur[14] + fpCur[15], hi = fpCur[16] + fpCur[17];
+  const tot = lo + mid + hi + 1e-6;
+  const tilt = clamp(Math.floor(4 * hi / tot), 0, 3);            // bright or heavy
+  const body = clamp(Math.floor(4 * mid / tot), 0, 3);           // how full the middle is
+
+  /* Tempo is deliberately not in here. It is the least reliable of the four,
+     and a track sitting near a bucket edge flipped the whole look between
+     plays. It still shapes the seed below, where a couple of bpm cost nothing. */
+  const code = ((pc * 4 + tilt) * 4 + body) * 3 + tonal;
+  const h1 = Math.imul(code ^ 0x9e3779b9, 2654435761) >>> 0;
+  const h2 = Math.imul(code + 0x85ebca6b, 2246822519) >>> 0;
+  const frac = function(n){ return ((n >>> 9) & 0xffff) / 65535; };
+
+  F.seed[0] = frac(h1);                                    // stable, arbitrary
+  F.seed[1] = clamp(hi / (hi + lo + 1e-6), 0, 1);          // bright against heavy
+  F.seed[2] = clamp((F.bpm - 70) / 110, 0, 1);             // slow against fast
+  F.seed[3] = frac(h2);
+  F.variant = h1 % 4;
+  /* Deal each instrument a form. Spreading the picks apart keeps two
+     instruments off the same shape, which is what made tracks look alike. */
+  for(let i = 0; i < 5; i++) F.forms[i] = (((h1 >>> (i * 3)) + i * 3) % 8) | 0;
+
+  /* Put the track in one of Klüver's four. Zero winding is a tunnel, no
+     radial frequency is a funnel of rays, both together is a spiral, and a
+     share of the tracks get the honeycomb instead. */
+  const pick = h2 % 4;
+  F.cortN = (h1 % 7) | 0;
+  F.cortW = 2.0 + F.seed[1] * 7.0;
+  if(pick === 0){ F.cortN = 0; }                       // tunnel
+  else if(pick === 1){ F.cortW = 0.0; F.cortN = 3 + (h1 % 6); }   // rays
+  F.cortHex = pick === 3 ? 1 : 0;                      // honeycomb
+
+  known.push({ p: Array.prototype.slice.call(fpCur), seed: Array.from(F.seed),
+               variant: F.variant, forms: Array.from(F.forms),
+               cortW: F.cortW, cortN: F.cortN, cortHex: F.cortHex });
+  rememberTrack();
+}
+
+function trackWatch(dt){
+  if(rawPk < 0.006){                     // a real gap, read from the raw peak
+    fpQuiet += dt;
+    // start the next track clean, or the one just gone bleeds into its profile
+    if(fpQuiet > 0.7 && fpHave){ fpHave = false; fpSlow.fill(0); fpAge = 0; }
+    return;
+  }
+  if(gate < 0.35) return;                // too quiet to learn anything from
+  fpQuiet = 0;
+  fpAge += dt;
+
+  const k = 1 - Math.exp(-dt / 2.2);     // a couple of seconds of character
+  for(let i = 0; i < 12; i++) fpSlow[i] += (F.chroma[i] - fpSlow[i]) * k;
+  for(let i = 0; i < 6; i++) fpSlow[12+i] += (F.bands[i] - fpSlow[12+i]) * k;
+
+  // wait for the average to settle before committing, or the seed depends on
+  // how far in the reading was taken rather than on the track
+  if(!fpHave){
+    if(fpAge > 4) commitTrack();
+    return;
+  }
+
+  // crossfaded tracks leave no gap, so also watch for the character changing
+  let dot = 0, na = 0, nb = 0;
+  for(let i = 0; i < FP_N; i++){ dot += fpSlow[i]*fpCur[i]; na += fpSlow[i]*fpSlow[i]; nb += fpCur[i]*fpCur[i]; }
+  const far = 1 - dot / (Math.sqrt(na*nb) + 1e-9);
+  fpDrift += (far > 0.34 ? dt : -dt * 1.5);
+  fpDrift = clamp(fpDrift, 0, 6);
+  if(fpDrift > 3.5 && fpAge > 20) commitTrack();
+}
+
+/* A hit fires when its level jumps, not when it is merely loud, with a short
+   refusal after each one so a single kick does not become five. */
+function spawnEvents(dt){
+  evClock += dt;
+  evSpin += dt * (0.3 + F.seed[2] * 0.8);
+  for(let i = 0; i < 5; i++){
+    const k = INST[i], v = F[k], rise = v - prevLvl[k];
+    prevLvl[k] = v;
+    if(v < 0.28 || rise < 0.09) continue;
+    if(evClock - lastFire[k] < REFRACT[k]) continue;
+    lastFire[k] = evClock;
+    addEvent(i, k, v);
+  }
+  for(let i = events.length - 1; i >= 0; i--)
+    if(evClock - events[i].born > LIFE[INST[events[i].inst]]) events.splice(i, 1);
+}
+
+/* Each instrument keeps to its own part of the frame, so you can tell them
+   apart even once they have melted together. */
+function addEvent(idx, k, str){
+  const s = F.seed, ang = evSpin * 0.6 + Math.random() * 6.28318;
+  let x, y, size;
+  if(k === 'kick'){
+    x = (Math.random() - 0.5) * 0.12; y = (Math.random() - 0.5) * 0.12;
+    size = 0.055 + str * 0.055;
+  } else if(k === 'bass'){
+    // spread wide rather than always low, or bass becomes a permanent strip
+    const t = evSpin * 0.23 + s[3] * 6.28318;
+    x = Math.cos(t) * (0.30 + Math.random() * 0.55) * 1.5;
+    y = Math.sin(t * 1.31) * (0.18 + Math.random() * 0.26);
+    size = 0.15 + str * 0.15;
+  } else if(k === 'snare'){
+    x = ((events.length & 1) ? 1 : -1) * (0.20 + Math.random() * 0.36);
+    y = (Math.random() - 0.5) * 0.52;
+    size = 0.075 + str * 0.075;
+  } else if(k === 'hat'){
+    const r = 0.40 + Math.random() * 0.24;
+    x = Math.cos(ang) * r * 1.45; y = Math.sin(ang) * r;
+    size = 0.020 + str * 0.024;
+  } else {
+    const r = 0.15 + Math.random() * 0.32;
+    x = Math.cos(evSpin * 0.7 + s[3] * 6.28) * r * 1.5;
+    y = Math.sin(evSpin * 1.1 + s[3] * 6.28) * r;
+    size = 0.095 + str * 0.10;
+  }
+  if(events.length >= MAXEV) events.shift();
+  events.push({ x: x, y: y, size: size, form: F.forms[idx], born: evClock,
+                hue: (hueOf(F.chord.root) + s[0] * 0.42 + idx * 0.13) % 1,
+                str: str, inst: idx });
+}
+
+function packEvents(){
+  let n = 0;
+  for(let i = 0; i < events.length && n < MAXEV; i++, n++){
+    const e = events[i], o = n * 4;
+    evA[o] = e.x; evA[o+1] = e.y; evA[o+2] = e.size; evA[o+3] = e.form;
+    evB[o] = clamp((evClock - e.born) / LIFE[INST[e.inst]], 0, 1);   // life, already normalised
+    evB[o+1] = e.hue; evB[o+2] = e.str; evB[o+3] = e.inst;
+  }
+  F.evCount = n;
+}
+
 function analyse(dt){
   /* Watch the waveform, not the button. A suspended context or a muted
      device both look identical from the outside: no samples. Say which. */
@@ -429,6 +718,7 @@ function analyse(dt){
   for (let i = 0; i < timeBuf.length; i++){ const v = timeBuf[i] < 0 ? -timeBuf[i] : timeBuf[i]; if (v > pk) pk = v; }
   F.level += (pk - F.level) * (pk > F.level ? 0.5 : 0.05);
   gate = clamp((F.level - 0.004) / 0.021, 0, 1);
+  rawPk = pk;
   if (pk > 0.0015){
     silentFor = 0;
     if (!F.live){ F.live = true; showHint(''); }
@@ -483,6 +773,9 @@ function analyse(dt){
 
   pushOnset(flux, dt);
   runBeatClock(dt);
+  trackWatch(dt);
+  spawnEvents(dt);
+  packEvents();
 
   // 24 triad templates, cosine similarity, then four frames of agreement
   let best = -1, bestRoot = 0, bestQ = 'maj';
@@ -533,6 +826,8 @@ precision highp float;
 uniform vec2 uRes; uniform float uT,uBass,uMid,uAir,uPhase,uHue,uBright;
 uniform float uPinch,uSpread,uHueOff,uRoll,uGain;
 uniform float uBeat,uBar,uKick,uSnare;
+uniform vec4 uSeed; uniform int uVariant;
+uniform float uCortW, uCortN, uCortHex, uCortAmp;
 #define MAXITEM 32
 uniform int uCount;
 uniform vec4 uItemA[MAXITEM];   // xy position, z size, w type
@@ -572,6 +867,97 @@ vec3 items(vec2 p){
   }
   return acc*0.085;
 }
+/* ---- the cortical field ------------------------------------------------
+   Klüver catalogued four shapes that recur across mescaline, LSD and
+   psilocybin: tunnels, spirals, lattices and cobwebs. Ermentrout and Cowan
+   showed why. The map from retina to V1 is logarithmic, x = ln r and
+   y = theta, so plain stripes of cortical activity are seen as rings when
+   they run one way, as rays when they run the other, and as spirals in
+   between; a hexagonal cortical pattern is seen as a honeycomb.
+
+   So this does not imitate those pictures, it draws them the way the cortex
+   is thought to make them. One wave, cos(w*ln r + n*theta), covers all of
+   them: n = 0 is a tunnel, w = 0 is a funnel of rays, both together spiral.
+   n has to stay a whole number or the pattern tears where theta wraps. */
+float cortex(vec2 p, float phase){
+  float r = max(length(p), 1e-3);
+  float th = atan(p.y, p.x);
+  float lr = log(r);
+  float w = cos(uCortW*lr + uCortN*th - phase);
+  if(uCortHex > 0.01){
+    // two more waves turned away from the first: stripes become a honeycomb
+    float m = max(1.0, floor(uCortN*0.5) + 3.0);
+    float b2 = -0.5*uCortW*lr + m*th - phase*0.8;
+    float b3 = -0.5*uCortW*lr - m*th - phase*0.8;
+    w = mix(w, (w + cos(b2) + cos(b3))*0.333, uCortHex);
+  }
+  return w;
+}
+
+/* ---- the form library -------------------------------------------------
+   Eight ways a hit can be drawn. Each track hands its instruments a
+   different set, so the kick is a ring on one track and a rosette on the
+   next, rather than the same shape wearing a new colour. */
+#define MAXEV 28
+uniform int uEvCount;
+uniform vec4 uEvA[MAXEV];   // xy position, z size, w form
+uniform vec4 uEvB[MAXEV];   // x life 0..1, y hue, z strength, w instrument
+
+float smax(float a, float b, float k){
+  float h = clamp(0.5 + 0.5*(b - a)/k, 0.0, 1.0);
+  return mix(a, b, h) + k*h*(1.0 - h);
+}
+float formOf(int f, vec2 q, float sz, float t, float str){
+  float d = length(q), a = atan(q.y, q.x);
+  float fade = (1.0 - t)*(1.0 - t);
+  float e = 0.0;
+  if(f == 0){                       // ring: races out and thins
+    float r = sz + t*0.60;
+    e = exp(-pow((d - r)/(sz*0.5 + 0.010), 2.0));
+  } else if(f == 1){                // blob: swells, then sinks
+    float r = sz*(1.0 + t*0.85);
+    e = exp(-(d*d)/(r*r));
+  } else if(f == 2){                // shard: one narrow blade
+    e = pow(abs(cos(a*0.5)), 26.0) * exp(-d*d/(sz*sz*9.0));
+  } else if(f == 3){                // rosette: petals opening
+    float petal = pow(abs(cos(a*3.0 + t*2.0)), 5.0);
+    e = petal * exp(-pow((d - sz*(0.6 + t*1.5))/(sz*0.85), 2.0));
+  } else if(f == 4){                // lattice: a patch of cells
+    vec2 g = fract(q/(sz*0.75)) - 0.5;
+    float cell = 1.0 - smoothstep(0.16, 0.40, length(g));
+    e = cell * exp(-d*d/(sz*sz*7.0));
+  } else if(f == 5){                // filament: a thin drawn arc
+    float arc = abs(d - sz*(0.8 + t*1.1));
+    e = exp(-pow(arc/(sz*0.16 + 0.004), 2.0)) * (0.45 + 0.55*cos(a*2.0 + t*4.0));
+  } else if(f == 6){                // burst: spokes thrown outward
+    float sp = pow(abs(sin(a*5.0 + str*3.0)), 16.0);
+    e = sp * exp(-d/(sz*(1.5 + t*4.0)));
+  } else {                          // bubble: hollow, with a bright rim
+    float r = sz*(1.0 + t*1.2);
+    e = exp(-pow((d - r)/(r*0.30), 2.0))*0.85 + exp(-(d*d)/(r*r))*0.20;
+  }
+  return max(e, 0.0) * fade;
+}
+
+/* Every live hit, warped by one shared field so neighbours flow into each
+   other, then unioned smoothly so overlaps swell instead of stacking. */
+vec3 drawEvents(vec2 p){
+  vec2 w = vec2(fbm3(p*1.5 + uT*0.05), fbm3(p*1.5 + vec2(4.1,2.3) - uT*0.05)) - 0.5;
+  vec2 pw = p + w*(0.055 + uBass*0.075);
+  vec3 col = vec3(0.0);
+  float field = 0.0;
+  for(int i = 0; i < MAXEV; i++){
+    if(i >= uEvCount) break;
+    vec4 A = uEvA[i], B = uEvB[i];
+    float e = formOf(int(A.w), pw - A.xy, max(A.z, 0.008), B.x, B.z);
+    col += pal(B.y + e*0.18) * e * B.z;
+    field = smax(field, e, 0.32);          // this is the melt
+  }
+  // where several forms overlap the union blooms, so they read as one body
+  col += pal(uHue + 0.15) * pow(clamp(field, 0.0, 1.0), 2.2) * 0.22;
+  return col * 0.115;
+}
+
 vec2 fold(vec2 p){
   if(uSpread < 0.02) return p;
   float seg = 2.0 + floor(uSpread*7.0);
@@ -598,10 +984,13 @@ vec2 curl(vec2 p){
    being told which is which. They are summed, not blended. */
 
 // KICK: a shockwave fired on the beat, racing out and thinning as it goes
-vec3 elemKick(float r){
+vec3 elemKick(float r, float a){
+  // the track decides whether the wave goes out round or cornered
+  float sides = 3.0 + floor(uSeed.w*5.0);
+  float rr = r * (1.0 + uSeed.w*0.16*cos(a*sides));
   float rad = fract(uPhase)*1.25;
   float w = 0.028 + 0.055*uKick;
-  float ring = exp(-pow((r - rad)/w, 2.0)) * (1.0 - fract(uPhase)*0.65);
+  float ring = exp(-pow((rr - rad)/w, 2.0)) * (1.0 - fract(uPhase)*0.65);
   float core = exp(-r*r/(0.009 + uKick*0.030));
   float k = uKick*uKick;
   return pal(uHue) * (ring*k*0.180 + core*k*0.225);
@@ -610,17 +999,18 @@ vec3 elemKick(float r){
 // BASS: a slow heavy mass underneath everything, swelling with the low end
 vec3 elemBass(vec2 p){
   float t = uT*0.05;
-  vec2 q = vec2(fbm3(p*0.75 + t), fbm3(p*0.75 + vec2(3.1,1.7) - t));
-  float m = fbm3(p*1.05 + q*(1.0 + uBass*2.4));
+  float sc = 0.55 + uSeed.y*1.05;          // fine grained or broad, per track
+  vec2 q = vec2(fbm3(p*sc + t), fbm3(p*sc + vec2(3.1,1.7) - t));
+  float m = fbm3(p*(sc*1.4) + q*(1.0 + uBass*2.4));
   float body = smoothstep(0.66 - uBass*0.34, 0.98, m);
   return pal(uHue + 0.08) * body * (0.0022 + uBass*0.051);
 }
 
 // SNARE: shards that crack outward from the middle when the backbeat lands
 vec3 elemSnare(float r, float a){
-  float seed = floor(uT*2.0);
-  float n = 6.0 + floor(h21(vec2(seed, 3.0))*6.0);
-  float blades = pow(abs(sin(a*n + h21(vec2(seed, 9.0))*6.28318)), 30.0);
+  float sd = floor(uT*2.0);
+  float n = 4.0 + floor(uSeed.x*9.0) + floor(h21(vec2(sd, 3.0))*4.0);
+  float blades = pow(abs(sin(a*n + h21(vec2(sd, 9.0))*6.28318)), 30.0);
   float s = uSnare*uSnare;
   return pal(uHue + 0.5) * blades * s * exp(-r*0.9) * 0.162;
 }
@@ -628,8 +1018,8 @@ vec3 elemSnare(float r, float a){
 // HATS: fine grit twinkling out towards the rim. The cell grid has to stay
 // small or the feedback zoom drags each one into a visible block.
 vec3 elemHat(vec2 p, float r){
-  vec2 g = floor(p*185.0);
-  float spark = step(0.9955 - uAir*0.0075, h21(g + floor(uT*26.0)));
+  vec2 g = floor(p*(140.0 + uSeed.z*120.0));
+  float spark = step(0.9962 - uAir*(0.0055 + uSeed.y*0.0055), h21(g + floor(uT*26.0)));
   return pal(uHue + 0.62) * spark * uAir * smoothstep(0.12, 0.8, r) * 0.128;
 }
 
@@ -638,13 +1028,53 @@ vec3 elemMelody(vec2 p){
   float t = uT*0.03;
   vec2 w = vec2(fbm3(p*1.45 + t), fbm3(p*1.45 + vec2(5.2,2.8) - t));
   float f = fbm3(p*1.15 + w*1.7);
-  float lines = pow(0.5 + 0.5*sin(f*20.0 - uT*0.5), 10.0);
+  float lines = pow(0.5 + 0.5*sin(f*(12.0 + uSeed.z*24.0) - uT*0.5), 10.0);
   return pal(uHue + 0.28 + f*0.14) * lines * (0.0022 + uMid*0.065);
 }
 
 vec3 src0(vec2 p){
   float r = length(p), a = atan(p.y, p.x);
-  return elemBass(p) + elemMelody(p) + elemKick(r) + elemSnare(r, a) + elemHat(p, r);
+  /* the cortical bed underneath, the sustained parts over it, then every
+     individual hit on top, so nothing that happens in the track is silent */
+  float c = cortex(p, uT*0.22 + uPhase*3.14159);
+  float ridge = pow(max(c, 0.0), 3.0);              // keep the crests, drop the troughs
+  vec3 bed = pal(uHue + c*0.10 + r*0.12) * ridge * uCortAmp * 0.055;
+  /* Only a trace of the hits goes into the buffer, purely to leave a wake.
+     The buffer resamples itself every frame, which is a repeated blur: draw
+     the hits in full here and they are soft blobs within ten frames. They go
+     in sharp at the end instead. */
+  return bed + elemBass(p)*0.6 + elemMelody(p)*0.5 + elemHat(p, r)*0.7 + drawEvents(p)*0.30;
+}
+
+/* How the previous frame is moved before the new one is added. A constant
+   pull toward the middle is what turned every shape into the same radial
+   streaks, so it is now one option of four rather than the whole look, and
+   the track picks which. The pulse stays in all of them: the kick supplies
+   the movement instead of a fixed drift. */
+vec2 flow(vec2 p){
+  /* Scaling about the exact centre every frame is what makes everything come
+     out radially symmetric no matter what was drawn. Drifting the centre
+     breaks that, and costs nothing. */
+  vec2 o = vec2(sin(uT*0.037 + uSeed.x*6.28318), cos(uT*0.029 + uSeed.w*6.28318)) * 0.16;
+  p -= o;
+  float rot = uRoll*0.030;
+  if(uVariant == 1){                       // turning: a slow carousel, no pull in
+    float a = 0.0125 + uBar*0.030 + uMid*0.008 + rot;
+    return mat2(cos(a),-sin(a),sin(a),cos(a)) * p;
+  }
+  if(uVariant == 2){                       // rising, like smoke lifting off the beat
+    float a = 0.0010 + rot;
+    vec2 q = mat2(cos(a),-sin(a),sin(a),cos(a)) * p;
+    return q + vec2(sin(uT*0.06 + uSeed.w*6.28318)*0.0045, -0.0090 - uKick*0.022);
+  }
+  if(uVariant == 3){                       // pumping: hard out on the kick, back between
+    float s = 1.0 - 0.0010 - uKick*0.055 + sin(uPhase*6.28318)*0.019;
+    float a = 0.0012 + uBar*0.010 + rot;
+    return mat2(cos(a),-sin(a),sin(a),cos(a)) * (p*s);
+  }
+  // 0: nearly still, so each shape holds its place and stays readable
+  float a = 0.0006 + uMid*0.002 + uBar*0.007 + rot;
+  return mat2(cos(a),-sin(a),sin(a),cos(a)) * (p*(1.0 - 0.0003 - uKick*0.004));
 }
 vec3 srcHero(vec2 p){
   float t = uT*0.045;
@@ -698,16 +1128,10 @@ void main(){
   if(uScene == 1){
     col = march(p) + items(fold(p))*2.4;
   } else if(uScene == 0){
-    /* A constant zoom drags every shape into the same radial streaks, which
-       is what made all five elements read as one thing. Keep the drift small
-       and let the kick supply the pull, so the tunnel is an event, not a look. */
-    float sc = 1.0 - 0.0035 - uBass*0.005 - uPinch*0.020 - uKick*0.019;
-    float an = 0.0012 + uMid*0.004 + uRoll*0.030 + uBar*0.010;
-    vec2 q = mat2(cos(an),-sin(an),sin(an),cos(an)) * (p*sc);
     /* Feedback is a gain, not a fade: at 0.92 anything steady is multiplied
        about twelvefold before it settles, which is what buried every shape
        under a white core. Shorter trail, and the sources are scaled to suit. */
-    col = texture(uPrev, toUV(q)).rgb*(0.893 + uGain*0.045) + src0(fold(p)) + items(fold(p));
+    col = texture(uPrev, toUV(flow(p))).rgb*(0.893 + uGain*0.045) + src0(fold(p)) + items(fold(p));
   } else if(uScene == 2){
     vec2 q = p - curl(p)*0.0045*(1.0 + uBass*1.6 + uPinch*3.0);
     col = texture(uPrev, toUV(q)).rgb*(0.950 + uGain*0.040) + src2(fold(p)) + items(fold(p));
@@ -729,6 +1153,8 @@ void main(){
   vec2 p = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;
   vec3 c = texture(uSrc, uv).rgb;
   c *= 0.55 + uBright*0.62;
+  // every hit, drawn once at full sharpness over its own wake
+  c += drawEvents(p) * 5.2;
   c *= 1.0 - 0.52*pow(clamp(length(p)*0.62,0.0,1.0), 2.0);
   c += (h21(gl_FragCoord.xy + uT)-0.5)*0.022;
   O = vec4(max(c,0.0), 1.0);
@@ -751,7 +1177,9 @@ function program(gl, fs){
 function uniforms(gl, p){
   const names = ['uRes','uT','uBass','uMid','uAir','uPhase','uHue','uBright','uPrev','uScene','uSrc',
                  'uPinch','uSpread','uHueOff','uRoll','uGain','uCount','uItemA','uItemB',
-                 'uBeat','uBar','uKick','uSnare'];
+                 'uBeat','uBar','uKick','uSnare','uSeed','uVariant',
+                 'uEvCount','uEvA','uEvB',
+                 'uCortW','uCortN','uCortHex','uCortAmp'];
   const u = {}; for(const n of names) u[n] = gl.getUniformLocation(p, n);
   return u;
 }
@@ -777,7 +1205,21 @@ function setCommon(gl, u, w, h, t, bright, g){
   gl.uniform1f(u.uBeat, F.beat);
   gl.uniform1f(u.uBar, F.bar);
   gl.uniform1f(u.uPhase, F.beatPhase);
-  gl.uniform1f(u.uHue, hueOf(F.chord.root) + (F.chord.quality === 'min' ? 0.045 : 0));
+  gl.uniform4fv(u.uSeed, F.seed);
+  gl.uniform1i(u.uVariant, F.variant | 0);
+  const ev = F.evCount | 0;
+  gl.uniform1i(u.uEvCount, ev);
+  if (ev > 0) { gl.uniform4fv(u.uEvA, evA); gl.uniform4fv(u.uEvB, evB); }
+  /* Which form constant this track sits in. The winding has to be a whole
+     number, and the bass bends the spiral pitch so the shape itself moves
+     with the music rather than only its brightness. */
+  gl.uniform1f(u.uCortW, F.cortW + F.bass * 1.6);
+  gl.uniform1f(u.uCortN, F.cortN);
+  gl.uniform1f(u.uCortHex, F.cortHex);
+  gl.uniform1f(u.uCortAmp, 0.25 + F.melody * 0.55 + F.bass * 0.35);
+  // the chord still moves the hue within a track; the seed sets where it sits
+  gl.uniform1f(u.uHue, hueOf(F.chord.root) + (F.chord.quality === 'min' ? 0.045 : 0)
+                       + F.seed[0] * 0.42);
   gl.uniform1f(u.uBright, bright);
 }
 const MAX_DIM = 3072;
@@ -848,13 +1290,16 @@ function makeRenderer(canvas, dprCap){
 }
 
 global.ChromaEngine = {
-  F: F, NOTE: NOTE, TRIADS: TRIADS, hueOf: hueOf, clamp: clamp, REDUCE: REDUCE,
+  F: F, NOTE: NOTE, TRIADS: TRIADS, hueOf: hueOf, clamp: clamp, REDUCE: REDUCE, BUILD: BUILD,
   hooks: hooks,
   synth: synth,
   analyse: function (dt) { if (analyser) { analyse(dt); return true; } return false; },
   hasInput: function () { return !!analyser; },
   enableMic: enableMic, useAudioStream: useAudioStream, playFile: playFile, micBlocked: micBlocked,
-  useDevice: useDevice, listInputs: listInputs, useSystemAudio: useSystemAudio,
+  useDevice: useDevice, listInputs: listInputs,
+  useSystemAudio: useSystemAudio, useTabAudio: useTabAudio,
+  knownTracks: function(){ return known; },
+  forgetTracks: function(){ known = []; rememberTrack(); },
   limitFlash: limitFlash,
   makeRenderer: makeRenderer, sizeCanvas: sizeCanvas, MAXITEM: 32
 };
